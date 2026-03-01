@@ -459,6 +459,12 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ paths }),
             }).then((r) => r.json()),
+          discardFiles: (paths) =>
+            fetch(`${api}/discard`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ paths }),
+            }).then((r) => r.json()),
           onFilesChanged: (callback) => {
             const es = new EventSource(`${api}/events`);
             es.onmessage = (e) => { if (e.data === "files-changed") callback(); };
@@ -575,11 +581,16 @@
         const actionLabel = file.staged ? "−" : "+";
         const actionTitle = file.staged ? "Unstage" : "Stage";
         const actionFn = file.staged ? "unstageOne" : "stageOne";
+        const canDiscard = !file.staged && file.status !== "added";
+        const discardBtn = canDiscard
+          ? `<button class="file-action file-discard" onclick="discardOne(event, ${index})" title="Discard changes">↩</button>`
+          : "";
 
         return `
           <div class="file-item${selectedIndices.has(index) ? ' selected' : ''}" data-index="${index}" onclick="handleFileClick(event, ${index})">
             <span class="file-status status-${file.status}">${statusChar}</span>
             <span class="file-path">${file.path}</span>
+            ${discardBtn}
             <button class="file-action" onclick="${actionFn}(event, ${index})" title="${actionTitle}">${actionLabel}</button>
           </div>`;
       }
@@ -729,6 +740,14 @@
         await autoRefresh();
       }
 
+      async function discardOne(e, index) {
+        e.stopPropagation();
+        const file = currentFiles[index];
+        if (!confirm(`Discard changes to ${file.path}?`)) return;
+        await window.gitDiff.discardFiles([file.path]);
+        await autoRefresh();
+      }
+
       async function stageAll(e) {
         e.stopPropagation();
         const paths = currentFiles.filter((f) => !f.staged).map((f) => f.path);
@@ -770,7 +789,21 @@
         const newFiles = await window.gitDiff.getChangedFiles();
         const newFingerprint = newFiles.map(f => `${f.path}:${f.status}:${f.staged}`).join("\n");
 
-        if (prevFingerprint === newFingerprint) return;
+        if (prevFingerprint === newFingerprint) {
+          // File list unchanged, but content may have changed — refresh current diff
+          if (currentIndex >= 0 && diffEditor) {
+            const file = currentFiles[currentIndex];
+            const diffData = await window.gitDiff.getFileDiff(file.path, file.staged);
+            const newOrig = diffData.original;
+            const newMod = diffData.modified;
+            if (currentOriginalModel && currentModifiedModel &&
+                (currentOriginalModel.getValue() !== newOrig || currentModifiedModel.getValue() !== newMod)) {
+              currentOriginalModel.setValue(newOrig);
+              currentModifiedModel.setValue(newMod);
+            }
+          }
+          return;
+        }
 
         currentFiles = newFiles;
         const fileList = document.getElementById("fileList");

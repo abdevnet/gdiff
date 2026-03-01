@@ -27,21 +27,32 @@ function getChangedFiles() {
   }).trimEnd();
   if (!raw) return [];
 
-  return raw.split("\n").map((line) => {
+  const results = [];
+  for (const line of raw.split("\n")) {
     const status = line.substring(0, 2);
     const filePath = line.substring(3).trim();
     const actualPath = filePath.includes(" -> ")
       ? filePath.split(" -> ")[1]
       : filePath;
 
-    let statusLabel = "modified";
-    if (status.includes("A") || status === "??") statusLabel = "added";
-    else if (status.includes("D")) statusLabel = "deleted";
-    else if (status.includes("R")) statusLabel = "renamed";
+    const indexStatus = status[0];
+    const workStatus = status[1];
 
-    const staged = status[0] !== " " && status[0] !== "?";
-    return { path: actualPath, status: statusLabel, staged };
-  });
+    function label(s) {
+      if (s === "A" || s === "?") return "added";
+      if (s === "D") return "deleted";
+      if (s === "R") return "renamed";
+      return "modified";
+    }
+
+    if (indexStatus !== " " && indexStatus !== "?") {
+      results.push({ path: actualPath, status: label(indexStatus), staged: true });
+    }
+    if (workStatus !== " " && workStatus !== undefined) {
+      results.push({ path: actualPath, status: label(workStatus), staged: false });
+    }
+  }
+  return results;
 }
 
 function getFileContent(filePath, version) {
@@ -115,6 +126,12 @@ function unstageFiles(filePaths) {
   return getChangedFiles();
 }
 
+function discardFiles(filePaths) {
+  const escaped = filePaths.map((f) => `"${f}"`).join(" ");
+  git(`checkout -- ${escaped}`);
+  return getChangedFiles();
+}
+
 function getRepoInfo() {
   const branch = git("branch --show-current") || git("rev-parse --short HEAD");
   const repoName = path.basename(repoPath);
@@ -125,7 +142,7 @@ function getRepoInfo() {
 
 module.exports = {
   git, getChangedFiles, getFileDiff, getFileContent,
-  detectLanguage, stageFiles, unstageFiles, getRepoInfo,
+  detectLanguage, stageFiles, unstageFiles, discardFiles, getRepoInfo,
   repoPath,
 };
 
@@ -177,6 +194,9 @@ if (require.main === module) {
     } else if (url.pathname === "/api/unstage" && req.method === "POST") {
       const { paths } = await readBody(req);
       json(res, unstageFiles(paths));
+    } else if (url.pathname === "/api/discard" && req.method === "POST") {
+      const { paths } = await readBody(req);
+      json(res, discardFiles(paths));
     } else if (url.pathname === "/api/events") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -205,13 +225,18 @@ if (require.main === module) {
 
   (async () => {
     const chokidar = await import("chokidar");
-    // Watch working tree (not .git)
-    const workTreeWatcher = chokidar.watch(repoPath, {
-      ignored: [/node_modules/, /\.git/],
+
+    // Get tracked files from git to watch (instead of entire directory)
+    const trackedFiles = git("ls-files").split("\n").filter(Boolean)
+      .map(f => path.join(repoPath, f));
+
+    const workTreeWatcher = chokidar.watch(trackedFiles, {
       ignoreInitial: true,
       persistent: true,
+      depth: 0,
     });
     workTreeWatcher.on("all", notifyClients);
+    workTreeWatcher.on("error", () => {});
 
     // Watch specific git state files for stage/commit/branch changes
     const gitWatcher = chokidar.watch([
@@ -223,6 +248,7 @@ if (require.main === module) {
       persistent: true,
     });
     gitWatcher.on("all", notifyClients);
+    gitWatcher.on("error", () => {});
   })();
 
   server.listen(PORT, () => {

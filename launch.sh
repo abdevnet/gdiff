@@ -8,11 +8,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ "$1" = "--serve" ]; then
   shift
-  REPO_PATH="${1:-$(pwd)}"
+  REPO_PATH="$(cd "${1:-.}" && pwd)"
+  # Kill any existing server before starting
+  lsof -ti :3420 2>/dev/null | xargs kill 2>/dev/null
+  sleep 0.3
   cd "$SCRIPT_DIR"
   node server.js "$REPO_PATH"
 else
-  REPO_PATH="${1:-$(pwd)}"
+  REPO_PATH="$(cd "${1:-.}" && pwd)"
   cd "$SCRIPT_DIR"
   npx electron . "$REPO_PATH"
 fi
