@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Git Diff Viewer</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", sans-serif;
+        background: #1e0528;
+        color: #ffeeff;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      /* ── Header ── */
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 16px;
+        background: #1a092d;
+        border-bottom: 1px solid #331354;
+        flex-shrink: 0;
+      }
+
+      .repo-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .repo-name {
+        font-weight: 600;
+        font-size: 14px;
+        color: #ffeeff;
+      }
+
+      .branch-badge {
+        background: #955ae7;
+        color: #fff;
+        padding: 2px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+
+      .file-count {
+        font-size: 12px;
+        color: #E6A6FF;
+      }
+
+      .header-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .btn {
+        background: #320f55;
+        color: #E6A6FF;
+        border: 1px solid #955ae7;
+        padding: 4px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+        transition: background 0.15s;
+      }
+
+      .btn:hover {
+        background: #955ae7;
+        color: #fff;
+      }
+
+      /* ── Layout ── */
+      .main {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+      }
+
+      /* ── Sidebar ── */
+      .sidebar {
+        width: 280px;
+        min-width: 200px;
+        background: #1a092d;
+        border-right: 1px solid #331354;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .sidebar-header {
+        padding: 10px 12px 6px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: #E6A6FF;
+        font-weight: 600;
+      }
+
+      .file-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 4px 0;
+      }
+
+      .file-group-label {
+        padding: 6px 12px 3px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #b900b1;
+        font-weight: 600;
+      }
+
+      .file-item {
+        display: flex;
+        align-items: center;
+        padding: 5px 12px;
+        cursor: pointer;
+        font-size: 13px;
+        gap: 8px;
+        transition: background 0.1s;
+      }
+
+      .file-item:hover {
+        background: #320f55;
+      }
+
+      .file-item.active {
+        background: #331354;
+        color: #ffeeff;
+      }
+
+      .file-status {
+        font-size: 10px;
+        font-weight: 700;
+        width: 16px;
+        text-align: center;
+        flex-shrink: 0;
+        border-radius: 2px;
+        padding: 1px 0;
+      }
+
+      .status-modified {
+        color: #00d9e9;
+      }
+      .status-added {
+        color: #05cb0d;
+      }
+      .status-deleted {
+        color: #aa00a3;
+      }
+      .status-renamed {
+        color: #4d6fff;
+      }
+
+      .file-path {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        direction: rtl;
+        text-align: left;
+      }
+
+      .staged-indicator {
+        font-size: 9px;
+        color: #05cb0d;
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+
+      .file-item.selected {
+        background: #331354;
+      }
+
+      .file-item.selected.active {
+        background: #4a1a6e;
+      }
+
+      .file-action {
+        margin-left: auto;
+        flex-shrink: 0;
+        background: none;
+        border: none;
+        color: #E6A6FF;
+        font-size: 14px;
+        cursor: pointer;
+        padding: 0 4px;
+        line-height: 1;
+        border-radius: 3px;
+        opacity: 0;
+        transition: opacity 0.1s;
+      }
+
+      .file-item:hover .file-action {
+        opacity: 1;
+      }
+
+      .file-action:hover {
+        color: #fff;
+        background: #955ae7;
+      }
+
+      .file-group-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 12px 3px;
+      }
+
+      .file-group-header .file-group-label {
+        padding: 0;
+      }
+
+      .group-action {
+        background: none;
+        border: none;
+        color: #E6A6FF;
+        font-size: 13px;
+        cursor: pointer;
+        padding: 0 4px;
+        line-height: 1;
+        border-radius: 3px;
+        opacity: 0;
+        transition: opacity 0.1s;
+      }
+
+      .file-group-header:hover .group-action {
+        opacity: 1;
+      }
+
+      .group-action:hover {
+        color: #fff;
+        background: #955ae7;
+      }
+
+      .bulk-action-bar {
+        display: none;
+        padding: 6px 12px;
+        background: #320f55;
+        border-bottom: 1px solid #331354;
+        gap: 6px;
+        align-items: center;
+        font-size: 12px;
+        color: #E6A6FF;
+      }
+
+      .bulk-action-bar.visible {
+        display: flex;
+      }
+
+      .bulk-btn {
+        background: #1a092d;
+        color: #E6A6FF;
+        border: 1px solid #955ae7;
+        padding: 2px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 11px;
+      }
+
+      .bulk-btn:hover {
+        background: #955ae7;
+        color: #fff;
+      }
+
+      .bulk-count {
+        margin-right: auto;
+      }
+
+      /* ── Editor ── */
+      .editor-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .editor-header {
+        padding: 6px 16px;
+        background: #320f55;
+        border-bottom: 1px solid #331354;
+        font-size: 13px;
+        color: #E6A6FF;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-shrink: 0;
+      }
+
+      .editor-file-name {
+        color: #ffeeff;
+        font-weight: 500;
+      }
+
+      .diff-mode-toggle {
+        margin-left: auto;
+        display: flex;
+        gap: 4px;
+      }
+
+      .toggle-btn {
+        background: transparent;
+        color: #E6A6FF;
+        border: 1px solid #955ae7;
+        padding: 2px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 11px;
+      }
+
+      .toggle-btn.active {
+        background: #955ae7;
+        color: #fff;
+        border-color: #955ae7;
+      }
+
+      #editor {
+        flex: 1;
+      }
+
+      .empty-state {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 12px;
+        color: #E6A6FF;
+      }
+
+      .empty-state .icon {
+        font-size: 48px;
+        opacity: 0.3;
+      }
+
+      .empty-state p {
+        font-size: 14px;
+      }
+
+      /* ── Scrollbar ── */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #955ae7;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #E6A6FF;
+      }
+
+      /* ── Keyboard shortcut hint ── */
+      .shortcut-hint {
+        font-size: 11px;
+        color: #E6A6FF;
+        padding: 8px 12px;
+        border-top: 1px solid #331354;
+      }
+
+      kbd {
+        background: #320f55;
+        border: 1px solid #955ae7;
+        border-radius: 3px;
+        padding: 1px 5px;
+        font-size: 10px;
+        font-family: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="repo-info">
+        <span class="repo-name" id="repoName">—</span>
+        <span class="branch-badge" id="branchName">—</span>
+        <span class="file-count" id="fileCount"></span>
+      </div>
+      <div class="header-actions">
+        <button class="btn toggle-btn active" id="btnSideBySide" onclick="setDiffMode('side')">
+          Side by Side
+        </button>
+        <button class="btn toggle-btn" id="btnInline" onclick="setDiffMode('inline')">
+          Inline
+        </button>
+
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="sidebar">
+        <div class="sidebar-header">Changed Files</div>
+        <div class="bulk-action-bar" id="bulkBar">
+          <span class="bulk-count" id="bulkCount"></span>
+          <button class="bulk-btn" onclick="bulkStage()">Stage</button>
+          <button class="bulk-btn" onclick="bulkUnstage()">Unstage</button>
+          <button class="bulk-btn" onclick="clearSelection()">Clear</button>
+        </div>
+        <div class="file-list" id="fileList"></div>
+        <div class="shortcut-hint">
+          <kbd>↑</kbd> <kbd>↓</kbd> navigate &nbsp;
+          <kbd>R</kbd> refresh
+        </div>
+      </div>
+
+      <div class="editor-container">
+        <div class="editor-header" id="editorHeader" style="display: none">
+          <span class="editor-file-name" id="editorFileName"></span>
+          <span id="editorLanguage" style="color: #955ae7; font-size: 11px"></span>
+        </div>
+        <div id="editor">
+          <div class="empty-state" id="emptyState">
+            <div class="icon">⎕</div>
+            <p>Select a file to view diff</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+    <script>
+      // ── Dual transport: IPC (Electron) or fetch/SSE (browser) ──
+      if (!window.gitDiff) {
+        const api = window.location.origin + "/api";
+        window.gitDiff = {
+          getChangedFiles: () => fetch(`${api}/changed-files`).then((r) => r.json()),
+          getFileDiff: (path, staged) =>
+            fetch(`${api}/file-diff?path=${encodeURIComponent(path)}&staged=${staged}`).then((r) => r.json()),
+          getRepoInfo: () => fetch(`${api}/repo-info`).then((r) => r.json()),
+          refresh: () => fetch(`${api}/changed-files`).then((r) => r.json()),
+          stageFiles: (paths) =>
+            fetch(`${api}/stage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ paths }),
+            }).then((r) => r.json()),
+          unstageFiles: (paths) =>
+            fetch(`${api}/unstage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ paths }),
+            }).then((r) => r.json()),
+          onFilesChanged: (callback) => {
+            const es = new EventSource(`${api}/events`);
+            es.onmessage = (e) => { if (e.data === "files-changed") callback(); };
+          },
+        };
+      }
+
+      let diffEditor = null;
+      let currentFiles = [];
+      let currentIndex = -1;
+      let renderSideBySide = true;
+      let currentOriginalModel = null;
+      let currentModifiedModel = null;
+      let selectedIndices = new Set();
+
+      // ── Initialize Monaco ──
+      require.config({
+        paths: {
+          vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs",
+        },
+      });
+
+      require(["vs/editor/editor.main"], async function () {
+        // Define a dark theme matching the shell
+        monaco.editor.defineTheme("gitDiffDark", {
+          base: "vs-dark",
+          inherit: true,
+          rules: [],
+          colors: {
+            "editor.background": "#1e0528",
+            "editor.foreground": "#ffeeff",
+            "editorLineNumber.foreground": "#955ae7",
+            "editorLineNumber.activeForeground": "#E6A6FF",
+            "diffEditor.insertedTextBackground": "#05cb0d25",
+            "diffEditor.removedTextBackground": "#aa00a325",
+            "diffEditor.insertedLineBackground": "#05cb0d15",
+            "diffEditor.removedLineBackground": "#aa00a315",
+            "editorGutter.addedBackground": "#05cb0d",
+            "editorGutter.modifiedBackground": "#00d9e9",
+            "editorGutter.deletedBackground": "#aa00a3",
+            "scrollbarSlider.background": "#955ae750",
+            "scrollbarSlider.hoverBackground": "#955ae7aa",
+            "scrollbarSlider.activeBackground": "#E6A6FF",
+          },
+        });
+        monaco.editor.setTheme("gitDiffDark");
+
+        await loadRepoInfo();
+        await loadFiles();
+
+        // Auto-refresh when files change on disk
+        window.gitDiff.onFilesChanged(() => autoRefresh());
+      });
+
+      // ── Load repo info ──
+      async function loadRepoInfo() {
+        const info = await window.gitDiff.getRepoInfo();
+        document.getElementById("repoName").textContent = info.repoName;
+        document.getElementById("branchName").textContent = info.branch;
+      }
+
+      // ── Load changed files ──
+      async function loadFiles() {
+        currentFiles = await window.gitDiff.getChangedFiles();
+        const fileList = document.getElementById("fileList");
+        fileList.innerHTML = "";
+
+        document.getElementById("fileCount").textContent =
+          `${currentFiles.length} file${currentFiles.length !== 1 ? "s" : ""} changed`;
+
+        if (currentFiles.length === 0) {
+          fileList.innerHTML =
+            '<div style="padding: 20px 12px; color: #E6A6FF; font-size: 13px; text-align: center;">Working tree clean ✓</div>';
+          return;
+        }
+
+        renderFileGroups(fileList);
+
+        // Auto-select first file
+        if (currentFiles.length > 0) {
+          selectFile(0);
+        }
+      }
+
+      function renderFileGroups(fileList) {
+        const staged = currentFiles.filter((f) => f.staged);
+        const unstaged = currentFiles.filter((f) => !f.staged);
+
+        if (staged.length > 0) {
+          fileList.innerHTML += `
+            <div class="file-group-header">
+              <span class="file-group-label">Staged (${staged.length})</span>
+              <button class="group-action" onclick="unstageAll(event)" title="Unstage all">−</button>
+            </div>`;
+          staged.forEach((f) => {
+            fileList.innerHTML += renderFileItem(f, currentFiles.indexOf(f));
+          });
+        }
+
+        if (unstaged.length > 0) {
+          fileList.innerHTML += `
+            <div class="file-group-header">
+              <span class="file-group-label">Unstaged (${unstaged.length})</span>
+              <button class="group-action" onclick="stageAll(event)" title="Stage all">+</button>
+            </div>`;
+          unstaged.forEach((f) => {
+            fileList.innerHTML += renderFileItem(f, currentFiles.indexOf(f));
+          });
+        }
+      }
+
+      function renderFileItem(file, index) {
+        const statusChar = { modified: "M", added: "A", deleted: "D", renamed: "R" }[file.status];
+        const actionLabel = file.staged ? "−" : "+";
+        const actionTitle = file.staged ? "Unstage" : "Stage";
+        const actionFn = file.staged ? "unstageOne" : "stageOne";
+
+        return `
+          <div class="file-item${selectedIndices.has(index) ? ' selected' : ''}" data-index="${index}" onclick="handleFileClick(event, ${index})">
+            <span class="file-status status-${file.status}">${statusChar}</span>
+            <span class="file-path">${file.path}</span>
+            <button class="file-action" onclick="${actionFn}(event, ${index})" title="${actionTitle}">${actionLabel}</button>
+          </div>`;
+      }
+
+      // ── Select and show diff ──
+      async function selectFile(index) {
+        currentIndex = index;
+        const file = currentFiles[index];
+
+        // Update active state in sidebar
+        document.querySelectorAll(".file-item").forEach((el) => {
+          el.classList.toggle("active", parseInt(el.dataset.index) === index);
+        });
+
+        // Show editor header
+        document.getElementById("editorHeader").style.display = "flex";
+        document.getElementById("editorFileName").textContent = file.path;
+
+        const diffData = await window.gitDiff.getFileDiff(
+          file.path,
+          file.staged
+        );
+        document.getElementById("editorLanguage").textContent = diffData.language;
+
+        // Hide empty state
+        const emptyState = document.getElementById("emptyState");
+        if (emptyState) emptyState.style.display = "none";
+
+        // Create or update diff editor
+        const container = document.getElementById("editor");
+
+        // Dispose previous models to prevent memory leak
+        if (currentOriginalModel) currentOriginalModel.dispose();
+        if (currentModifiedModel) currentModifiedModel.dispose();
+
+        currentOriginalModel = monaco.editor.createModel(diffData.original, diffData.language);
+        currentModifiedModel = monaco.editor.createModel(diffData.modified, diffData.language);
+
+        if (!diffEditor) {
+          diffEditor = monaco.editor.createDiffEditor(container, {
+            theme: "gitDiffDark",
+            readOnly: true,
+            renderSideBySide: renderSideBySide,
+            automaticLayout: true,
+            minimap: { enabled: false },
+            fontSize: 13,
+            lineHeight: 20,
+            scrollBeyondLastLine: false,
+            renderOverviewRuler: false,
+            diffWordWrap: "on",
+            padding: { top: 8, bottom: 8 },
+          });
+        }
+
+        diffEditor.setModel({
+          original: currentOriginalModel,
+          modified: currentModifiedModel,
+        });
+      }
+
+      // ── Diff mode toggle ──
+      function setDiffMode(mode) {
+        renderSideBySide = mode === "side";
+        document
+          .getElementById("btnSideBySide")
+          .classList.toggle("active", renderSideBySide);
+        document
+          .getElementById("btnInline")
+          .classList.toggle("active", !renderSideBySide);
+
+        if (diffEditor) {
+          diffEditor.updateOptions({ renderSideBySide });
+        }
+      }
+
+      // ── Refresh ──
+      async function refresh() {
+        if (diffEditor) {
+          diffEditor.dispose();
+          diffEditor = null;
+        }
+        document.getElementById("editor").innerHTML =
+          '<div class="empty-state" id="emptyState"><div class="icon">⎕</div><p>Select a file to view diff</p></div>';
+        document.getElementById("editorHeader").style.display = "none";
+        currentIndex = -1;
+        await loadFiles();
+      }
+
+      // ── File click with multi-select ──
+      function handleFileClick(e, index) {
+        if (e.metaKey || e.ctrlKey) {
+          if (selectedIndices.has(index)) {
+            selectedIndices.delete(index);
+          } else {
+            selectedIndices.add(index);
+          }
+        } else if (e.shiftKey && currentIndex >= 0) {
+          const start = Math.min(currentIndex, index);
+          const end = Math.max(currentIndex, index);
+          for (let i = start; i <= end; i++) selectedIndices.add(i);
+        } else {
+          selectedIndices.clear();
+        }
+        selectFile(index);
+        updateSelectionUI();
+      }
+
+      function updateSelectionUI() {
+        document.querySelectorAll(".file-item").forEach((el) => {
+          const idx = parseInt(el.dataset.index);
+          el.classList.toggle("selected", selectedIndices.has(idx));
+        });
+        const bar = document.getElementById("bulkBar");
+        if (selectedIndices.size >= 2) {
+          bar.classList.add("visible");
+          document.getElementById("bulkCount").textContent = `${selectedIndices.size} selected`;
+        } else {
+          bar.classList.remove("visible");
+        }
+      }
+
+      function clearSelection() {
+        selectedIndices.clear();
+        updateSelectionUI();
+      }
+
+      // ── Stage / Unstage actions ──
+      async function stageOne(e, index) {
+        e.stopPropagation();
+        await window.gitDiff.stageFiles([currentFiles[index].path]);
+        await autoRefresh();
+      }
+
+      async function unstageOne(e, index) {
+        e.stopPropagation();
+        await window.gitDiff.unstageFiles([currentFiles[index].path]);
+        await autoRefresh();
+      }
+
+      async function stageAll(e) {
+        e.stopPropagation();
+        const paths = currentFiles.filter((f) => !f.staged).map((f) => f.path);
+        if (paths.length) await window.gitDiff.stageFiles(paths);
+        await autoRefresh();
+      }
+
+      async function unstageAll(e) {
+        e.stopPropagation();
+        const paths = currentFiles.filter((f) => f.staged).map((f) => f.path);
+        if (paths.length) await window.gitDiff.unstageFiles(paths);
+        await autoRefresh();
+      }
+
+      async function bulkStage() {
+        const paths = [...selectedIndices]
+          .map((i) => currentFiles[i])
+          .filter((f) => !f.staged)
+          .map((f) => f.path);
+        if (paths.length) await window.gitDiff.stageFiles(paths);
+        selectedIndices.clear();
+        await autoRefresh();
+      }
+
+      async function bulkUnstage() {
+        const paths = [...selectedIndices]
+          .map((i) => currentFiles[i])
+          .filter((f) => f.staged)
+          .map((f) => f.path);
+        if (paths.length) await window.gitDiff.unstageFiles(paths);
+        selectedIndices.clear();
+        await autoRefresh();
+      }
+
+      // ── Auto-refresh (preserves current selection) ──
+      async function autoRefresh() {
+        const selectedPath = currentIndex >= 0 ? currentFiles[currentIndex]?.path : null;
+        currentFiles = await window.gitDiff.getChangedFiles();
+        const fileList = document.getElementById("fileList");
+        fileList.innerHTML = "";
+
+        document.getElementById("fileCount").textContent =
+          `${currentFiles.length} file${currentFiles.length !== 1 ? "s" : ""} changed`;
+
+        if (currentFiles.length === 0) {
+          fileList.innerHTML =
+            '<div style="padding: 20px 12px; color: #E6A6FF; font-size: 13px; text-align: center;">Working tree clean ✓</div>';
+          if (diffEditor) {
+            diffEditor.dispose();
+            diffEditor = null;
+          }
+          document.getElementById("editor").innerHTML =
+            '<div class="empty-state" id="emptyState"><div class="icon">⎕</div><p>Select a file to view diff</p></div>';
+          document.getElementById("editorHeader").style.display = "none";
+          currentIndex = -1;
+          return;
+        }
+
+        selectedIndices.clear();
+        updateSelectionUI();
+        renderFileGroups(fileList);
+
+        // Re-select the same file if it still exists, otherwise select first
+        const restoredIndex = selectedPath
+          ? currentFiles.findIndex((f) => f.path === selectedPath)
+          : -1;
+        selectFile(restoredIndex >= 0 ? restoredIndex : 0);
+      }
+
+      // ── Keyboard navigation ──
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowDown" && currentFiles.length > 0) {
+          e.preventDefault();
+          selectFile(Math.min(currentIndex + 1, currentFiles.length - 1));
+        } else if (e.key === "ArrowUp" && currentFiles.length > 0) {
+          e.preventDefault();
+          selectFile(Math.max(currentIndex - 1, 0));
+        } else if (e.key.toLowerCase() === "r" && !e.metaKey && !e.ctrlKey) {
+          // Only refresh if not typing in an input
+          if (document.activeElement.tagName !== "INPUT") {
+            refresh();
+          }
+        }
+      });
+    </script>
+  </body>
+</html>

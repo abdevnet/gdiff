@@ -1,0 +1,17 @@
+{
+  "name": "git-diff-viewer",
+  "version": "1.0.0",
+  "description": "Lightweight Monaco-based git diff viewer",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "serve": "node server.js",
+    "dev": "electron . --enable-logging"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  },
+  "dependencies": {
+    "chokidar": "^5.0.0"
+  }
+}
