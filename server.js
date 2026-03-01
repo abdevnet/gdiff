@@ -22,10 +22,12 @@ function git(args) {
 }
 
 function getChangedFiles() {
-  const statusOutput = git("status --porcelain");
-  if (!statusOutput) return [];
+  const raw = execSync("git status --porcelain", {
+    cwd: repoPath, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024,
+  }).trimEnd();
+  if (!raw) return [];
 
-  return statusOutput.split("\n").map((line) => {
+  return raw.split("\n").map((line) => {
     const status = line.substring(0, 2);
     const filePath = line.substring(3).trim();
     const actualPath = filePath.includes(" -> ")
@@ -192,22 +194,35 @@ if (require.main === module) {
 
   // File watcher → push SSE events
   let watchDebounce = null;
+  function notifyClients() {
+    clearTimeout(watchDebounce);
+    watchDebounce = setTimeout(() => {
+      for (const client of sseClients) {
+        client.write("data: files-changed\n\n");
+      }
+    }, 500);
+  }
+
   (async () => {
     const chokidar = await import("chokidar");
-    const watcher = chokidar.watch(repoPath, {
-      ignored: [/node_modules/, /\.git\/(?!index)/, /\.git$/],
+    // Watch working tree (not .git)
+    const workTreeWatcher = chokidar.watch(repoPath, {
+      ignored: [/node_modules/, /\.git/],
       ignoreInitial: true,
       persistent: true,
     });
+    workTreeWatcher.on("all", notifyClients);
 
-    watcher.on("all", () => {
-      clearTimeout(watchDebounce);
-      watchDebounce = setTimeout(() => {
-        for (const client of sseClients) {
-          client.write("data: files-changed\n\n");
-        }
-      }, 300);
+    // Watch specific git state files for stage/commit/branch changes
+    const gitWatcher = chokidar.watch([
+      path.join(repoPath, ".git", "index"),
+      path.join(repoPath, ".git", "HEAD"),
+      path.join(repoPath, ".git", "refs"),
+    ], {
+      ignoreInitial: true,
+      persistent: true,
     });
+    gitWatcher.on("all", notifyClients);
   })();
 
   server.listen(PORT, () => {

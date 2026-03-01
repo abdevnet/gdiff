@@ -10,6 +10,14 @@
         box-sizing: border-box;
       }
 
+      .monaco-editor .cursors-layer {
+        display: none !important;
+      }
+      .monaco-editor .current-line {
+        border: none !important;
+        background: none !important;
+      }
+
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
           "Helvetica Neue", sans-serif;
@@ -167,8 +175,8 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        direction: rtl;
-        text-align: left;
+        min-width: 0;
+        flex: 1;
       }
 
       .staged-indicator {
@@ -623,6 +631,16 @@
             renderOverviewRuler: false,
             diffWordWrap: "on",
             padding: { top: 8, bottom: 8 },
+            cursorStyle: "line-thin",
+            cursorBlinking: "solid",
+            cursorSmoothCaretAnimation: "off",
+            hideCursorInOverviewRuler: true,
+            renderLineHighlight: "none",
+            smoothScrolling: false,
+            matchBrackets: "never",
+            occurrencesHighlight: "off",
+            selectionHighlight: false,
+            links: false,
           });
         }
 
@@ -748,7 +766,13 @@
       // ── Auto-refresh (preserves current selection) ──
       async function autoRefresh() {
         const selectedPath = currentIndex >= 0 ? currentFiles[currentIndex]?.path : null;
-        currentFiles = await window.gitDiff.getChangedFiles();
+        const prevFingerprint = currentFiles.map(f => `${f.path}:${f.status}:${f.staged}`).join("\n");
+        const newFiles = await window.gitDiff.getChangedFiles();
+        const newFingerprint = newFiles.map(f => `${f.path}:${f.status}:${f.staged}`).join("\n");
+
+        if (prevFingerprint === newFingerprint) return;
+
+        currentFiles = newFiles;
         const fileList = document.getElementById("fileList");
         fileList.innerHTML = "";
 
