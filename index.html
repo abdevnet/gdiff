@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
     <title>Git Diff Viewer</title>
     <style>
       * {
@@ -105,19 +106,102 @@
         overflow: hidden;
       }
 
-      .sidebar-header {
-        padding: 10px 12px 6px;
+      .accordion-section {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .accordion-section.expanded {
+        flex: 1;
+      }
+
+      .accordion-header {
+        display: flex;
+        align-items: center;
+        padding: 7px 12px;
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.8px;
         color: #E6A6FF;
         font-weight: 600;
+        cursor: pointer;
+        background: #1a092d;
+        border-bottom: 1px solid #331354;
+        gap: 6px;
+        flex-shrink: 0;
+        user-select: none;
+        transition: background 0.1s;
+      }
+      .accordion-header:hover {
+        background: #250e3d;
+      }
+      .accordion-chevron {
+        font-size: 9px;
+        transition: transform 0.15s;
+        color: #955ae7;
+      }
+      .accordion-section.expanded .accordion-chevron {
+        transform: rotate(90deg);
+      }
+      .accordion-badge {
+        font-size: 10px;
+        background: #955ae730;
+        color: #E6A6FF;
+        padding: 0 6px;
+        border-radius: 8px;
+        margin-left: auto;
+      }
+      .accordion-body {
+        display: none;
+        overflow-y: auto;
+        flex: 1;
+      }
+      .accordion-section.expanded .accordion-body {
+        display: block;
       }
 
       .file-list {
-        flex: 1;
-        overflow-y: auto;
         padding: 4px 0;
+      }
+
+      /* ── File Explorer tree ── */
+      .tree-item {
+        display: flex;
+        align-items: center;
+        padding: 3px 12px;
+        cursor: pointer;
+        font-size: 13px;
+        gap: 6px;
+        transition: background 0.1s;
+        white-space: nowrap;
+      }
+      .tree-item:hover {
+        background: #320f55;
+      }
+      .tree-item.active {
+        background: #331354;
+      }
+      .tree-icon {
+        font-size: 11px;
+        width: 14px;
+        text-align: center;
+        flex-shrink: 0;
+        color: #955ae7;
+      }
+      .tree-icon.dir {
+        color: #E6A6FF;
+      }
+      .tree-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .tree-children {
+        display: none;
+      }
+      .tree-children.open {
+        display: block;
       }
 
       .file-group-label {
@@ -370,6 +454,19 @@
         background: #E6A6FF;
       }
 
+      /* ── Splitter ── */
+      .splitter {
+        width: 4px;
+        cursor: col-resize;
+        background: #331354;
+        flex-shrink: 0;
+        transition: background 0.15s;
+      }
+      .splitter:hover,
+      .splitter.dragging {
+        background: #955ae7;
+      }
+
       /* ── Keyboard shortcut hint ── */
       .shortcut-hint {
         font-size: 11px;
@@ -408,20 +505,37 @@
 
     <div class="main">
       <div class="sidebar">
-        <div class="sidebar-header">Changed Files</div>
-        <div class="bulk-action-bar" id="bulkBar">
-          <span class="bulk-count" id="bulkCount"></span>
-          <button class="bulk-btn" onclick="bulkStage()">Stage</button>
-          <button class="bulk-btn" onclick="bulkUnstage()">Unstage</button>
-          <button class="bulk-btn" onclick="clearSelection()">Clear</button>
+        <div class="accordion-section expanded" id="changesSection">
+          <div class="accordion-header" onclick="toggleAccordion('changesSection')">
+            <span class="accordion-chevron">&#9654;</span>
+            Git Changes
+            <span class="accordion-badge" id="changesBadge">0</span>
+          </div>
+          <div class="accordion-body">
+            <div class="bulk-action-bar" id="bulkBar">
+              <span class="bulk-count" id="bulkCount"></span>
+              <button class="bulk-btn" onclick="bulkStage()">Stage</button>
+              <button class="bulk-btn" onclick="bulkUnstage()">Unstage</button>
+              <button class="bulk-btn" onclick="clearSelection()">Clear</button>
+            </div>
+            <div class="file-list" id="fileList"></div>
+          </div>
         </div>
-        <div class="file-list" id="fileList"></div>
+        <div class="accordion-section" id="explorerSection">
+          <div class="accordion-header" onclick="toggleAccordion('explorerSection')">
+            <span class="accordion-chevron">&#9654;</span>
+            File Explorer
+          </div>
+          <div class="accordion-body" id="explorerBody"></div>
+        </div>
         <div class="shortcut-hint">
           <kbd>↑</kbd> <kbd>↓</kbd> navigate &nbsp;
+          <kbd>Z</kbd> open in Zed &nbsp;
           <kbd>R</kbd> refresh
         </div>
       </div>
 
+      <div class="splitter" id="splitter"></div>
       <div class="editor-container">
         <div class="editor-header" id="editorHeader" style="display: none">
           <span class="editor-file-name" id="editorFileName"></span>
@@ -441,32 +555,39 @@
       // ── Dual transport: IPC (Electron) or fetch/SSE (browser) ──
       if (!window.gitDiff) {
         const api = window.location.origin + "/api";
+        const pageRepo = new URLSearchParams(window.location.search).get("repo");
+        const rq = pageRepo ? `&repo=${encodeURIComponent(pageRepo)}` : "";
+        const rqFirst = pageRepo ? `?repo=${encodeURIComponent(pageRepo)}` : "";
         window.gitDiff = {
-          getChangedFiles: () => fetch(`${api}/changed-files`).then((r) => r.json()),
+          getChangedFiles: () => fetch(`${api}/changed-files${rqFirst}`).then((r) => r.json()),
           getFileDiff: (path, staged) =>
-            fetch(`${api}/file-diff?path=${encodeURIComponent(path)}&staged=${staged}`).then((r) => r.json()),
-          getRepoInfo: () => fetch(`${api}/repo-info`).then((r) => r.json()),
-          refresh: () => fetch(`${api}/changed-files`).then((r) => r.json()),
+            fetch(`${api}/file-diff?path=${encodeURIComponent(path)}&staged=${staged}${rq}`).then((r) => r.json()),
+          getRepoInfo: () => fetch(`${api}/repo-info${rqFirst}`).then((r) => r.json()),
+          refresh: () => fetch(`${api}/changed-files${rqFirst}`).then((r) => r.json()),
           stageFiles: (paths) =>
-            fetch(`${api}/stage`, {
+            fetch(`${api}/stage${rqFirst}`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ paths }),
             }).then((r) => r.json()),
           unstageFiles: (paths) =>
-            fetch(`${api}/unstage`, {
+            fetch(`${api}/unstage${rqFirst}`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ paths }),
             }).then((r) => r.json()),
           discardFiles: (paths) =>
-            fetch(`${api}/discard`, {
+            fetch(`${api}/discard${rqFirst}`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ paths }),
             }).then((r) => r.json()),
+          getFileTree: (subPath) =>
+            fetch(`${api}/file-tree${rqFirst}${subPath ? `${rqFirst ? '&' : '?'}path=${encodeURIComponent(subPath)}` : ''}`).then((r) => r.json()),
+          openInEditor: (filePath) =>
+            fetch(`${api}/open-in-editor?path=${encodeURIComponent(filePath)}${rq}`),
           onFilesChanged: (callback) => {
-            const es = new EventSource(`${api}/events`);
+            const es = new EventSource(`${api}/events${rqFirst}`);
             es.onmessage = (e) => { if (e.data === "files-changed") callback(); };
           },
         };
@@ -534,6 +655,7 @@
 
         document.getElementById("fileCount").textContent =
           `${currentFiles.length} file${currentFiles.length !== 1 ? "s" : ""} changed`;
+        document.getElementById("changesBadge").textContent = currentFiles.length;
 
         if (currentFiles.length === 0) {
           fileList.innerHTML =
@@ -543,7 +665,6 @@
 
         renderFileGroups(fileList);
 
-        // Auto-select first file
         if (currentFiles.length > 0) {
           selectFile(0);
         }
@@ -639,7 +760,7 @@
             fontSize: 13,
             lineHeight: 20,
             scrollBeyondLastLine: false,
-            renderOverviewRuler: false,
+            renderOverviewRuler: true,
             diffWordWrap: "on",
             padding: { top: 8, bottom: 8 },
             cursorStyle: "line-thin",
@@ -811,6 +932,7 @@
 
         document.getElementById("fileCount").textContent =
           `${currentFiles.length} file${currentFiles.length !== 1 ? "s" : ""} changed`;
+        document.getElementById("changesBadge").textContent = currentFiles.length;
 
         if (currentFiles.length === 0) {
           fileList.innerHTML =
@@ -837,6 +959,88 @@
         selectFile(restoredIndex >= 0 ? restoredIndex : 0);
       }
 
+      // ── Accordion ──
+      function toggleAccordion(sectionId) {
+        const section = document.getElementById(sectionId);
+        const wasExpanded = section.classList.contains("expanded");
+        section.classList.toggle("expanded");
+        if (sectionId === "explorerSection" && !wasExpanded && !explorerLoaded) {
+          loadFileTree();
+        }
+      }
+
+      // ── File Explorer ──
+      let explorerLoaded = false;
+
+      async function loadFileTree() {
+        const body = document.getElementById("explorerBody");
+        body.innerHTML = '<div style="padding: 12px; color: #955ae7; font-size: 12px;">Loading...</div>';
+        const tree = await window.gitDiff.getFileTree();
+        explorerLoaded = true;
+        body.innerHTML = "";
+        renderTree(tree, body, 0);
+      }
+
+      function renderTree(nodes, container, depth) {
+        for (const node of nodes) {
+          const el = document.createElement("div");
+          if (node.type === "dir") {
+            const row = document.createElement("div");
+            row.className = "tree-item";
+            row.style.paddingLeft = (12 + depth * 16) + "px";
+            row.innerHTML = `<span class="tree-icon dir">&#9654;</span><span class="tree-name">${node.name}</span>`;
+            el.appendChild(row);
+            const children = document.createElement("div");
+            children.className = "tree-children";
+            renderTree(node.children, children, depth + 1);
+            el.appendChild(children);
+            row.addEventListener("click", () => {
+              children.classList.toggle("open");
+              const icon = row.querySelector(".tree-icon");
+              icon.innerHTML = children.classList.contains("open") ? "&#9660;" : "&#9654;";
+            });
+          } else {
+            el.className = "tree-item";
+            el.style.paddingLeft = (12 + depth * 16) + "px";
+            el.innerHTML = `<span class="tree-icon">&#9679;</span><span class="tree-name">${node.name}</span>`;
+            el.addEventListener("click", () => {
+              if (window.gitDiff.openInEditor) window.gitDiff.openInEditor(node.path);
+            });
+          }
+          container.appendChild(el);
+        }
+      }
+
+      // ── Splitter drag ──
+      (function () {
+        const splitter = document.getElementById("splitter");
+        const sidebar = document.querySelector(".sidebar");
+        let startX, startWidth;
+
+        splitter.addEventListener("mousedown", (e) => {
+          startX = e.clientX;
+          startWidth = sidebar.offsetWidth;
+          splitter.classList.add("dragging");
+          document.body.style.cursor = "col-resize";
+          document.body.style.userSelect = "none";
+          document.addEventListener("mousemove", onDrag);
+          document.addEventListener("mouseup", onUp);
+        });
+
+        function onDrag(e) {
+          const newWidth = Math.max(120, Math.min(600, startWidth + e.clientX - startX));
+          sidebar.style.width = newWidth + "px";
+        }
+
+        function onUp() {
+          splitter.classList.remove("dragging");
+          document.body.style.cursor = "";
+          document.body.style.userSelect = "";
+          document.removeEventListener("mousemove", onDrag);
+          document.removeEventListener("mouseup", onUp);
+        }
+      })();
+
       // ── Keyboard navigation ──
       document.addEventListener("keydown", (e) => {
         if (e.key === "ArrowDown" && currentFiles.length > 0) {
@@ -845,13 +1049,21 @@
         } else if (e.key === "ArrowUp" && currentFiles.length > 0) {
           e.preventDefault();
           selectFile(Math.max(currentIndex - 1, 0));
+        } else if (e.key.toLowerCase() === "z" && !e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (document.activeElement.tagName !== "INPUT" && currentIndex >= 0) {
+            const file = currentFiles[currentIndex];
+            if (file && window.gitDiff.openInEditor) {
+              window.gitDiff.openInEditor(file.path);
+            }
+          }
         } else if (e.key.toLowerCase() === "r" && !e.metaKey && !e.ctrlKey) {
-          // Only refresh if not typing in an input
           if (document.activeElement.tagName !== "INPUT") {
             refresh();
           }
         }
-      });
+      }, true);
     </script>
   </body>
 </html>

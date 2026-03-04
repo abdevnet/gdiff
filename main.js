@@ -1,14 +1,16 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
+const { execFile } = require("child_process");
 const path = require("path");
 const {
   getChangedFiles, getFileDiff, detectLanguage,
-  stageFiles, unstageFiles, getRepoInfo, repoPath,
+  stageFiles, unstageFiles, getFileTree, getRepoInfo, repoPath,
 } = require("./server");
 
 let mainWindow;
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  const iconPath = path.join(__dirname, "icon.png");
+  const opts = {
     width: 1400,
     height: 900,
     title: `Git Diff Viewer — ${path.basename(repoPath)}`,
@@ -18,7 +20,12 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, "preload.js"),
     },
-  });
+  };
+  try {
+    if (require("fs").existsSync(iconPath)) opts.icon = iconPath;
+  } catch {}
+
+  mainWindow = new BrowserWindow(opts);
 
   mainWindow.loadFile("index.html");
 }
@@ -36,6 +43,11 @@ ipcMain.handle("get-repo-info", () => getRepoInfo());
 ipcMain.handle("refresh", () => getChangedFiles());
 ipcMain.handle("stage-files", (_, filePaths) => stageFiles(filePaths));
 ipcMain.handle("unstage-files", (_, filePaths) => unstageFiles(filePaths));
+ipcMain.handle("get-file-tree", (_, subPath) => getFileTree(subPath ? path.join(repoPath, subPath) : undefined, undefined, subPath || ""));
+ipcMain.handle("open-in-editor", (_, filePath) => {
+  const abs = path.resolve(repoPath, filePath);
+  execFile("open", ["-a", "Zed", abs]);
+});
 
 // File watcher
 let watchDebounce = null;
@@ -60,6 +72,12 @@ async function startWatcher() {
 }
 
 app.whenReady().then(() => {
+  const iconPath = path.join(__dirname, "icon.png");
+  try {
+    if (require("fs").existsSync(iconPath) && app.dock) {
+      app.dock.setIcon(iconPath);
+    }
+  } catch {}
   createWindow();
   startWatcher();
 });

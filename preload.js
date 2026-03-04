@@ -8,5 +8,7 @@ contextBridge.exposeInMainWorld("gitDiff", {
   refresh: () => ipcRenderer.invoke("refresh"),
   stageFiles: (paths) => ipcRenderer.invoke("stage-files", paths),
   unstageFiles: (paths) => ipcRenderer.invoke("unstage-files", paths),
+  getFileTree: (subPath) => ipcRenderer.invoke("get-file-tree", subPath),
+  openInEditor: (filePath) => ipcRenderer.invoke("open-in-editor", filePath),
   onFilesChanged: (callback) => ipcRenderer.on("files-changed", callback),
 });
