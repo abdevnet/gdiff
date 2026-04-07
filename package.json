@@ -1,12 +1,28 @@
 {
-  "name": "git-diff-viewer",
+  "name": "gdiff-viewer",
   "version": "1.0.0",
-  "description": "Lightweight Monaco-based git diff viewer",
+  "description": "Lightweight Monaco-based git diff viewer — runs in your browser",
   "main": "main.js",
+  "bin": {
+    "gdiff": "bin/gdiff.js"
+  },
+  "files": [
+    "bin/",
+    "server.js",
+    "index.html",
+    "favicon.png",
+    "gdiff.png"
+  ],
   "scripts": {
     "start": "electron .",
     "serve": "node server.js",
     "dev": "electron . --enable-logging"
+  },
+  "keywords": ["git", "diff", "viewer", "monaco"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
   },
   "devDependencies": {
     "electron": "^33.0.0"

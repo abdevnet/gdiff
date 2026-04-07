@@ -1,85 +1,70 @@
-# Git Diff Viewer
+# gdiff-viewer
 
-Lightweight Electron app using Monaco's diff editor to view git changes — essentially VS Code's diff view in a standalone window.
+Lightweight git diff viewer using Monaco's diff editor — VS Code's diff view in your browser. No build step, no heavy dependencies.
 
-## Setup
+![gdiff-viewer screenshot](gdiff.png)
 
-```bash
-cd git-diff-viewer
-npm install
-```
-
-## Usage
+## Quick Start
 
 ```bash
-# View diffs for current directory's repo
-npm start
-
-# View diffs for a specific repo/worktree
-npx electron . /path/to/your/repo
-
-# Or use the launcher script
-chmod +x launch.sh
-./launch.sh /path/to/your/repo
+npx gdiff-viewer            # diff the current repo
+npx gdiff-viewer /path/to/repo  # diff a specific repo or worktree
 ```
 
-### From Ghostty
-
-Add a keybinding in your Ghostty config to launch it directly:
-
-```
-# ~/.config/ghostty/config
-keybind = super+shift+d=new_window:command=/path/to/git-diff-viewer/launch.sh
-```
-
-Or create a shell alias:
-
-```bash
-alias gdiff='~/git-diff-viewer/launch.sh'
-```
-
-Then from any repo:
-
-```bash
-gdiff .
-gdiff ~/repos/my-worktree
-```
+Starts a local server and opens your default browser.
 
 ## Features
 
-- **Monaco diff editor** with full syntax highlighting (C#, SQL, PowerShell, TypeScript, etc.)
+- **Monaco diff editor** with full syntax highlighting
 - **Side-by-side** or **inline** diff modes
-- **Staged vs unstaged** grouping
-- **Keyboard navigation**: ↑/↓ to browse files, R to refresh
-- Auto-detects language from file extension
-- Dark theme matching VS Code
+- **Stage / unstage / discard** directly from the UI
+- **File explorer** sidebar with tree view
+- **Auto-refresh** — watches tracked files and git index for changes
+- **Keyboard navigation**: Arrow keys to browse, R to refresh
+- **Multi-repo** — open other repos via `?repo=/path` query param
+- **Worktree-friendly** — pass any path, it resolves to the git root
+- Works on **macOS, Windows, and Linux**
+
+## Install Globally (optional)
+
+```bash
+npm install -g gdiff-viewer
+gdiff /path/to/repo
+```
 
 ## Architecture
 
-Four files, zero build step:
+No build step — Monaco loads from CDN.
 
 | File | Purpose |
 |------|---------|
-| `main.js` | Electron main process — runs git commands, serves file content |
-| `preload.js` | IPC bridge — exposes `gitDiff` API to renderer |
-| `index.html` | UI + Monaco diff editor (loaded from CDN) |
-| `package.json` | Just Electron as a dev dependency |
+| `bin/gdiff.js` | CLI entry point — starts server, opens browser |
+| `server.js` | HTTP API — git commands, file serving, SSE file watcher |
+| `index.html` | UI + Monaco diff editor |
 
-## Worktree-Friendly
+## Worktree Usage
 
-Since it takes a path argument, it works great with git worktrees:
+Works great with git worktrees:
 
 ```bash
-# Check diffs on a feature branch worktree
-gdiff ~/repos/project-feature-xyz
-
-# Check main worktree
-gdiff ~/repos/project-main
+npx gdiff-viewer ~/repos/project-feature-xyz
+npx gdiff-viewer ~/repos/project-main
 ```
 
-## Future Ideas
+## Electron App (optional)
 
-- File watching with `chokidar` for auto-refresh
-- Commit history browser (pick any two commits to diff)
-- Integration with Claude Code for AI-powered diff summaries
-- Tray icon / global hotkey to open from anywhere
+If you prefer a standalone desktop window instead of the browser, clone the repo and run with Electron:
+
+```bash
+git clone https://github.com/YOUR_USERNAME/gdiff-viewer.git
+cd gdiff-viewer
+npm install
+npm start                        # diff the current directory
+npx electron . /path/to/repo    # diff a specific repo
+```
+
+You can also use the included launcher script:
+
+```bash
+./launch.sh /path/to/repo
+```

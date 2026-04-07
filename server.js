@@ -5,6 +5,12 @@ const http = require("http");
 
 let defaultRepoPath = process.argv[2] || process.cwd();
 defaultRepoPath = path.resolve(defaultRepoPath);
+try {
+  defaultRepoPath = execSync("git rev-parse --show-toplevel", {
+    cwd: defaultRepoPath, encoding: "utf-8",
+  }).trim();
+} catch {}
+
 
 // ── Git helpers ──
 
@@ -20,6 +26,20 @@ function git(args, repo) {
   } catch (e) {
     return e.stdout?.trim() || "";
   }
+}
+
+function listFilesRecursive(dirPath, prefix) {
+  const results = [];
+  const items = fs.readdirSync(dirPath, { withFileTypes: true });
+  for (const item of items) {
+    const rel = prefix + item.name;
+    if (item.isDirectory()) {
+      results.push(...listFilesRecursive(path.join(dirPath, item.name), rel + "/"));
+    } else {
+      results.push(rel);
+    }
+  }
+  return results;
 }
 
 function getChangedFiles(repo) {
@@ -45,6 +65,20 @@ function getChangedFiles(repo) {
       if (s === "D") return "deleted";
       if (s === "R") return "renamed";
       return "modified";
+    }
+
+    // Untracked directories: git shows "?? dir/" — expand into individual files
+    if (status === "??" && actualPath.endsWith("/")) {
+      const dirFull = path.join(repo, actualPath);
+      try {
+        const files = listFilesRecursive(dirFull, actualPath);
+        for (const f of files) {
+          results.push({ path: f, status: "added", staged: false });
+        }
+      } catch {
+        results.push({ path: actualPath, status: "added", staged: false });
+      }
+      continue;
     }
 
     if (indexStatus !== " " && indexStatus !== "?") {
@@ -83,11 +117,7 @@ function getFileDiff(filePath, staged, repo) {
     original = getFileContent(filePath, "head", repo);
     modified = getFileContent(filePath, "staged", repo);
   } else {
-    try {
-      original = git(`show :"${filePath}"`, repo);
-    } catch {
-      original = getFileContent(filePath, "head", repo);
-    }
+    original = git(`show :"${filePath}"`, repo) || git(`show HEAD:"${filePath}"`, repo);
     modified = getFileContent(filePath, "working", repo);
   }
   return { original, modified };
@@ -176,13 +206,13 @@ function getRepoInfo(repo) {
 module.exports = {
   git, getChangedFiles, getFileDiff, getFileContent,
   detectLanguage, stageFiles, unstageFiles, discardFiles, getFileTree, getRepoInfo,
-  repoPath: defaultRepoPath,
+  startServer, repoPath: defaultRepoPath,
 };
 
 // ── HTTP Server (only when run directly) ──
 
-if (require.main === module) {
-  const PORT = parseInt(process.env.PORT || "3420", 10);
+function startServer(port) {
+  port = port || parseInt(process.env.PORT || "3420", 10);
   const sseClients = new Map(); // repo -> Set<res>
 
   function json(res, data) {
@@ -204,7 +234,7 @@ if (require.main === module) {
   }
 
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, `http://localhost:${PORT}`);
+    const url = new URL(req.url, `http://localhost:${port}`);
 
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -266,7 +296,10 @@ if (require.main === module) {
       const repo = resolveRepo(url);
       const filePath = url.searchParams.get("path");
       const abs = path.resolve(repo, filePath);
-      require("child_process").execFile("open", ["-a", "Zed", abs]);
+      const { spawn } = require("child_process");
+      if (process.platform === "darwin") spawn("open", [abs]);
+      else if (process.platform === "win32") spawn("cmd", ["/c", "start", "", abs], { shell: true });
+      else spawn("xdg-open", [abs]);
       json(res, { ok: true });
     } else {
       res.writeHead(404);
@@ -312,8 +345,17 @@ if (require.main === module) {
   // Watch default repo on startup
   ensureWatcher(defaultRepoPath);
 
-  server.listen(PORT, () => {
-    console.log(`Git Diff Viewer serving ${path.basename(defaultRepoPath)} at http://localhost:${PORT}`);
-    console.log(`Open other repos: http://localhost:${PORT}?repo=/path/to/repo`);
+  return new Promise((resolve) => {
+    server.listen(port, () => {
+      const actualPort = server.address().port;
+      resolve({ server, port: actualPort });
+    });
+  });
+}
+
+if (require.main === module) {
+  startServer().then(({ port }) => {
+    console.log(`Git Diff Viewer serving ${path.basename(defaultRepoPath)} at http://localhost:${port}`);
+    console.log(`Open other repos: http://localhost:${port}?repo=/path/to/repo`);
   });
 }

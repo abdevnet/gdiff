@@ -49,26 +49,40 @@ ipcMain.handle("open-in-editor", (_, filePath) => {
   execFile("open", ["-a", "Zed", abs]);
 });
 
-// File watcher
+// File watcher — watch tracked files + git index (not entire repo tree)
 let watchDebounce = null;
-async function startWatcher() {
-  const chokidar = await import("chokidar");
-  const watcher = chokidar.watch(repoPath, {
-    ignored: [/node_modules/, /\.git\/(?!index)/, /\.git$/],
-    ignoreInitial: true,
-    persistent: true,
-  });
+let fileWatcher = null;
+let gitWatcher = null;
 
-  watcher.on("all", () => {
+async function startWatcher() {
+  const { execSync } = require("child_process");
+  const chokidar = await import("chokidar");
+
+  const trackedFiles = execSync("git ls-files", {
+    cwd: repoPath, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024,
+  }).trim().split("\n").filter(Boolean).map(f => path.join(repoPath, f));
+
+  function notify() {
     clearTimeout(watchDebounce);
     watchDebounce = setTimeout(() => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("files-changed");
       }
     }, 300);
-  });
+  }
 
-  app.on("before-quit", () => watcher.close());
+  fileWatcher = chokidar.watch(trackedFiles, {
+    ignoreInitial: true, persistent: true, depth: 0,
+  });
+  fileWatcher.on("all", notify);
+  fileWatcher.on("error", () => {});
+
+  gitWatcher = chokidar.watch([
+    path.join(repoPath, ".git", "index"),
+    path.join(repoPath, ".git", "HEAD"),
+  ], { ignoreInitial: true, persistent: true });
+  gitWatcher.on("all", notify);
+  gitWatcher.on("error", () => {});
 }
 
 app.whenReady().then(() => {
@@ -81,4 +95,11 @@ app.whenReady().then(() => {
   createWindow();
   startWatcher();
 });
-app.on("window-all-closed", () => app.quit());
+
+app.on("window-all-closed", async () => {
+  await Promise.all([
+    fileWatcher?.close(),
+    gitWatcher?.close(),
+  ]);
+  app.quit();
+});
