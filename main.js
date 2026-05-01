@@ -19,6 +19,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: false,
       preload: path.join(__dirname, "preload.js"),
     },
   };
@@ -128,7 +129,11 @@ app.whenReady().then(() => {
     }
   } catch {}
   createWindow();
-  startWatcher();
+  // Defer the watcher so its execSync git-ls-files doesn't block the main
+  // process during the renderer's initial paint.
+  mainWindow.webContents.once("did-finish-load", () => {
+    startWatcher().catch(() => {});
+  });
 });
 
 app.on("window-all-closed", async () => {

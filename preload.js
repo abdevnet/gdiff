@@ -1,4 +1,19 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+// Inject the saved theme as a data attribute before any page script runs,
+// so the FOUC script can read it without touching localStorage (which has
+// a cold-start cost in fresh Electron renderers).
+try {
+  const cfg = JSON.parse(
+    fs.readFileSync(path.join(os.homedir(), ".gdiff-viewer.json"), "utf-8"),
+  );
+  if (cfg.theme) {
+    document.documentElement.dataset.themeInit = cfg.theme;
+  }
+} catch {}
 
 contextBridge.exposeInMainWorld("gitDiff", {
   getChangedFiles: () => ipcRenderer.invoke("get-changed-files"),

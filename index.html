@@ -2,22 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
     <title>Git Diff Viewer</title>
     <script>
       (function () {
-        var injected = document.documentElement.dataset.themeInit;
-        var id = injected || localStorage.getItem("git-diff-theme") || "default";
+        var id = document.documentElement.dataset.themeInit || "default";
         var builtIn = id === "default" || id === "github-dark";
         document.documentElement.dataset.theme = builtIn ? id : "custom";
-        if (!builtIn) {
-          try {
-            var c = JSON.parse(localStorage.getItem("git-diff-theme-cache") || "null");
-            if (c && c.id === id && c.cssVars) {
-              for (var k in c.cssVars) document.documentElement.style.setProperty(k, c.cssVars[k]);
-            }
-          } catch (e) {}
-        }
       })();
     </script>
     <style>
@@ -645,7 +635,7 @@
         </select>
         <script>
           document.getElementById("themePicker").value =
-            localStorage.getItem("git-diff-theme") || "default";
+            document.documentElement.dataset.themeInit || "default";
         </script>
       </div>
     </div>
@@ -770,7 +760,6 @@
       };
 
       // ── Themes ──
-      const THEME_KEY = "git-diff-theme";
       const themes = {
         default: {
           base: "vs-dark",
@@ -834,7 +823,6 @@
         },
       };
 
-      const THEME_CACHE_KEY = "git-diff-theme-cache";
       const CSS_VAR_NAMES = [
         "--bg-app", "--bg-panel", "--bg-panel-hover", "--bg-control",
         "--bg-selected", "--bg-selected-strong", "--border",
@@ -990,8 +978,6 @@
           document.documentElement.dataset.theme = id;
           clearInlineVars();
           if (window.monaco?.editor) monaco.editor.setTheme(`gitDiff-${id}`);
-          localStorage.setItem(THEME_KEY, id);
-          localStorage.removeItem(THEME_CACHE_KEY);
           if (picker) picker.value = id;
           return;
         }
@@ -1007,11 +993,6 @@
           monaco.editor.defineTheme("gitDiff-custom", internal.monaco);
           monaco.editor.setTheme("gitDiff-custom");
         }
-        localStorage.setItem(THEME_KEY, id);
-        localStorage.setItem(
-          THEME_CACHE_KEY,
-          JSON.stringify({ id, cssVars: internal.cssVars }),
-        );
         if (picker) picker.value = id;
       }
 
@@ -1084,14 +1065,11 @@
         const savedTheme =
           (cfg && cfg.theme) ||
           document.documentElement.dataset.themeInit ||
-          localStorage.getItem(THEME_KEY) ||
           "default";
 
         wireRepoInput();
         renderRepoInfo(repoInfo);
 
-        // Apply theme in parallel with file rendering. Built-ins are sync;
-        // JetBrains themes lazy-load themes.json on demand.
         const themePromise = applyTheme(savedTheme);
         renderFiles(files);
         await themePromise;
