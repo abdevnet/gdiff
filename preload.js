@@ -10,7 +10,6 @@ contextBridge.exposeInMainWorld("gitDiff", {
   unstageFiles: (paths) => ipcRenderer.invoke("unstage-files", paths),
   getFileTree: (subPath) => ipcRenderer.invoke("get-file-tree", subPath),
   openInEditor: (filePath) => ipcRenderer.invoke("open-in-editor", filePath),
-  listThemes: () => ipcRenderer.invoke("list-themes"),
-  loadTheme: (id) => ipcRenderer.invoke("load-theme", id),
+  getThemes: () => ipcRenderer.invoke("get-themes"),
   onFilesChanged: (callback) => ipcRenderer.on("files-changed", callback),
 });

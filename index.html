@@ -606,8 +606,10 @@
           Inline
         </button>
         <select class="theme-picker" id="themePicker" onchange="applyTheme(this.value)" title="Theme">
-          <option value="default">Default</option>
-          <option value="github-dark">GitHub Dark</option>
+          <optgroup label="Built-in">
+            <option value="default">Ghostty Purple</option>
+            <option value="github-dark">GitHub Dark</option>
+          </optgroup>
         </select>
         <script>
           document.getElementById("themePicker").value =
@@ -699,9 +701,7 @@
             fetch(`${api}/file-tree${rqFirst}${subPath ? `${rqFirst ? '&' : '?'}path=${encodeURIComponent(subPath)}` : ''}`).then((r) => r.json()),
           openInEditor: (filePath) =>
             fetch(`${api}/open-in-editor?path=${encodeURIComponent(filePath)}${rq}`),
-          listThemes: () => fetch(`${api}/themes`).then((r) => r.json()),
-          loadTheme: (id) =>
-            fetch(`${api}/theme?id=${encodeURIComponent(id)}`).then((r) => r.text()),
+          getThemes: () => fetch(`${api}/themes`).then((r) => r.json()),
           onFilesChanged: (callback) => {
             const es = new EventSource(`${api}/events${rqFirst}`);
             es.onmessage = (e) => { if (e.data === "files-changed") callback(); };
@@ -793,56 +793,7 @@
         "--branch-bg", "--branch-fg",
       ];
 
-      // ── JetBrains XML → internal theme ──
-      function parseJBTheme(xmlString) {
-        const doc = new DOMParser().parseFromString(xmlString, "application/xml");
-        const scheme = doc.querySelector("scheme");
-        if (!scheme) throw new Error("Invalid JetBrains scheme");
-
-        const colorOpt = (name) => {
-          const v = doc.querySelector(`scheme > colors > option[name="${name}"]`)?.getAttribute("value");
-          return v ? "#" + v.padStart(6, "0").toLowerCase() : null;
-        };
-        const attrOpt = (name) => {
-          const value = doc.querySelector(`scheme > attributes > option[name="${name}"] > value`);
-          if (!value) return null;
-          const out = {};
-          value.querySelectorAll(":scope > option").forEach((o) => {
-            const k = o.getAttribute("name");
-            const v = o.getAttribute("value");
-            if (k && v != null) out[k] = v;
-          });
-          return out;
-        };
-        const hex = (v) => (v ? "#" + v.padStart(6, "0").toLowerCase() : null);
-
-        const text = attrOpt("TEXT") || {};
-        return {
-          name: scheme.getAttribute("name") || "",
-          editorBg: hex(text.BACKGROUND),
-          editorFg: hex(text.FOREGROUND),
-          chrome: {
-            lineNumbers: colorOpt("LINE_NUMBERS_COLOR"),
-            gutter: colorOpt("GUTTER_BACKGROUND"),
-            caret: colorOpt("CARET_COLOR"),
-            caretRow: colorOpt("CARET_ROW_COLOR"),
-            selection: colorOpt("SELECTION_BACKGROUND"),
-            added: colorOpt("ADDED_LINES_COLOR") || colorOpt("FILESTATUS_ADDED"),
-            deleted: colorOpt("DELETED_LINES_COLOR") || colorOpt("FILESTATUS_DELETED"),
-            modified: colorOpt("MODIFIED_LINES_COLOR") || colorOpt("FILESTATUS_MODIFIED"),
-            separator: colorOpt("METHOD_SEPARATORS_COLOR") || colorOpt("INDENT_GUIDE"),
-          },
-          tokens: {
-            keyword: attrOpt("DEFAULT_KEYWORD"),
-            string: attrOpt("DEFAULT_STRING"),
-            number: attrOpt("DEFAULT_NUMBER"),
-            comment: attrOpt("DEFAULT_LINE_COMMENT") || attrOpt("DEFAULT_BLOCK_COMMENT"),
-            function: attrOpt("DEFAULT_FUNCTION_DECLARATION"),
-            type: attrOpt("DEFAULT_CLASS_NAME"),
-            operator: attrOpt("DEFAULT_OPERATION_SIGN"),
-          },
-        };
-      }
+      let bundledThemes = {}; // id → { name, editorBg, editorFg, chrome, tokens }
 
       function parseHex(hex) {
         const h = hex.replace("#", "").padStart(6, "0").slice(-6);
@@ -968,7 +919,7 @@
         }
       }
 
-      async function applyTheme(id) {
+      function applyTheme(id) {
         const picker = document.getElementById("themePicker");
 
         if (themes[id]) {
@@ -981,47 +932,45 @@
           return;
         }
 
-        try {
-          const xml = await window.gitDiff.loadTheme(id);
-          const parsed = parseJBTheme(xml);
-          const internal = jbToTheme(parsed);
-          document.documentElement.dataset.theme = "custom";
-          setInlineVars(internal.cssVars);
-          if (window.monaco?.editor) {
-            monaco.editor.defineTheme("gitDiff-custom", internal.monaco);
-            monaco.editor.setTheme("gitDiff-custom");
-          }
-          localStorage.setItem(THEME_KEY, id);
-          localStorage.setItem(THEME_CACHE_KEY, JSON.stringify({ id, cssVars: internal.cssVars }));
-          if (picker) picker.value = id;
-        } catch (e) {
-          console.error("Failed to load theme", id, e);
-          applyTheme("default");
+        const data = bundledThemes[id];
+        if (!data) return applyTheme("default");
+
+        const internal = jbToTheme(data);
+        document.documentElement.dataset.theme = "custom";
+        setInlineVars(internal.cssVars);
+        if (window.monaco?.editor) {
+          monaco.editor.defineTheme("gitDiff-custom", internal.monaco);
+          monaco.editor.setTheme("gitDiff-custom");
         }
+        localStorage.setItem(THEME_KEY, id);
+        localStorage.setItem(
+          THEME_CACHE_KEY,
+          JSON.stringify({ id, cssVars: internal.cssVars }),
+        );
+        if (picker) picker.value = id;
       }
 
-      function prettyThemeName(id) {
-        return id
-          .replace(/-(light|contrast)$/, "")
-          .split(/[-_]/)
-          .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ""))
-          .join(" ");
+      function displayThemeName(id, data) {
+        const raw = (data && data.name) || id;
+        return raw.replace(/\s*\(rainglow\)\s*$/i, "");
       }
 
       async function populateThemePicker() {
         const picker = document.getElementById("themePicker");
-        if (!picker || !window.gitDiff.listThemes) return;
-        let list = [];
-        try { list = await window.gitDiff.listThemes(); } catch { return; }
-        if (!list.length) return;
+        if (!picker || !window.gitDiff.getThemes) return;
+        try { bundledThemes = await window.gitDiff.getThemes(); } catch { return; }
+        const ids = Object.keys(bundledThemes);
+        if (!ids.length) return;
 
         const dark = [], light = [], contrast = [];
-        for (const id of list) {
-          const item = { id, name: prettyThemeName(id) };
+        for (const id of ids) {
+          const item = { id, name: displayThemeName(id, bundledThemes[id]) };
           if (id.endsWith("-light")) light.push(item);
           else if (id.endsWith("-contrast")) contrast.push(item);
           else dark.push(item);
         }
+        const sortByName = (a, b) => a.name.localeCompare(b.name);
+        dark.sort(sortByName); light.sort(sortByName); contrast.sort(sortByName);
 
         const make = (label, items) => {
           if (!items.length) return null;

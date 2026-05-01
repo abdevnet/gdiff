@@ -13,6 +13,20 @@ try {
   process.exit(1);
 }
 
+// On Windows, re-spawn ourselves detached so the launching terminal isn't held.
+if (process.platform === "win32" && !process.env.GDIFF_DETACHED) {
+  const port = process.env.PORT || "3420";
+  console.log(`gdiff serving ${path.basename(repoPath)} at http://localhost:${port}`);
+  console.log("(running in background — stop via Task Manager: node.exe)");
+  const child = spawn(process.execPath, [__filename, ...process.argv.slice(2)], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, GDIFF_DETACHED: "1" },
+  });
+  child.unref();
+  process.exit(0);
+}
+
 // Override argv so server.js picks up the repo path
 process.argv[2] = repoPath;
 
