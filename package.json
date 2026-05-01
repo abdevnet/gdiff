@@ -1,6 +1,6 @@
 {
   "name": "gdiff-viewer",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "Lightweight Monaco-based git diff viewer — runs in your browser",
   "main": "main.js",
   "bin": {
