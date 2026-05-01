@@ -1,7 +1,30 @@
 const { execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const http = require("http");
+
+// ── JetBrains XML themes ──
+
+const themesDir = process.env.GHOSTTY_DIFF_THEMES_DIR
+  || path.join(os.homedir(), "projects/samples/jetbrains/colors");
+
+function listThemes() {
+  try {
+    if (!fs.existsSync(themesDir)) return [];
+    return fs.readdirSync(themesDir)
+      .filter(f => f.endsWith(".xml"))
+      .map(f => f.slice(0, -4))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function loadTheme(id) {
+  if (!/^[a-zA-Z0-9._\-]+$/.test(id)) throw new Error("Invalid theme id");
+  return fs.readFileSync(path.join(themesDir, id + ".xml"), "utf-8");
+}
 
 let defaultRepoPath = process.argv[2] || process.cwd();
 defaultRepoPath = path.resolve(defaultRepoPath);
@@ -206,6 +229,7 @@ function getRepoInfo(repo) {
 module.exports = {
   git, getChangedFiles, getFileDiff, getFileContent,
   detectLanguage, stageFiles, unstageFiles, discardFiles, getFileTree, getRepoInfo,
+  listThemes, loadTheme,
   startServer, repoPath: defaultRepoPath,
 };
 
@@ -292,6 +316,16 @@ function startServer(port) {
       const sub = url.searchParams.get("path") || "";
       const dir = sub ? path.join(repo, sub) : repo;
       json(res, getFileTree(dir, repo, sub));
+    } else if (url.pathname === "/api/themes") {
+      json(res, listThemes());
+    } else if (url.pathname === "/api/theme") {
+      const id = url.searchParams.get("id");
+      try {
+        res.writeHead(200, { "Content-Type": "application/xml" });
+        res.end(loadTheme(id));
+      } catch (e) {
+        res.writeHead(404); res.end(String(e.message));
+      }
     } else if (url.pathname === "/api/open-in-editor") {
       const repo = resolveRepo(url);
       const filePath = url.searchParams.get("path");

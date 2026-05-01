@@ -4,6 +4,7 @@ const path = require("path");
 const {
   getChangedFiles, getFileDiff, detectLanguage,
   stageFiles, unstageFiles, getFileTree, getRepoInfo, repoPath,
+  listThemes, loadTheme,
 } = require("./server");
 
 let mainWindow;
@@ -44,6 +45,8 @@ ipcMain.handle("refresh", () => getChangedFiles());
 ipcMain.handle("stage-files", (_, filePaths) => stageFiles(filePaths));
 ipcMain.handle("unstage-files", (_, filePaths) => unstageFiles(filePaths));
 ipcMain.handle("get-file-tree", (_, subPath) => getFileTree(subPath ? path.join(repoPath, subPath) : undefined, undefined, subPath || ""));
+ipcMain.handle("list-themes", () => listThemes());
+ipcMain.handle("load-theme", (_, id) => loadTheme(id));
 ipcMain.handle("open-in-editor", (_, filePath) => {
   const abs = path.resolve(repoPath, filePath);
   execFile("open", ["-a", "Zed", abs]);

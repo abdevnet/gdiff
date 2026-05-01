@@ -4,7 +4,74 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <title>Git Diff Viewer</title>
+    <script>
+      (function () {
+        var id = localStorage.getItem("git-diff-theme") || "default";
+        var builtIn = id === "default" || id === "github-dark";
+        document.documentElement.dataset.theme = builtIn ? id : "custom";
+        if (!builtIn) {
+          try {
+            var c = JSON.parse(localStorage.getItem("git-diff-theme-cache") || "null");
+            if (c && c.id === id && c.cssVars) {
+              for (var k in c.cssVars) document.documentElement.style.setProperty(k, c.cssVars[k]);
+            }
+          } catch (e) {}
+        }
+      })();
+    </script>
     <style>
+      /* ── Theme tokens ── */
+      :root,
+      [data-theme="default"] {
+        --bg-app: #1e0528;
+        --bg-panel: #1a092d;
+        --bg-panel-hover: #250e3d;
+        --bg-control: #320f55;
+        --bg-selected: #331354;
+        --bg-selected-strong: #4a1a6e;
+        --border: #331354;
+        --text: #ffeeff;
+        --text-muted: #e6a6ff;
+        --accent: #955ae7;
+        --accent-hi: #e6a6ff;
+        --accent-on: #ffffff;
+        --accent-tint: #955ae730;
+        --scroll: #955ae7;
+        --scroll-hi: #e6a6ff;
+        --label: #b900b1;
+        --status-modified: #00d9e9;
+        --status-added: #05cb0d;
+        --status-deleted: #aa00a3;
+        --status-renamed: #4d6fff;
+        --branch-bg: #955ae7;
+        --branch-fg: #ffffff;
+      }
+
+      [data-theme="github-dark"] {
+        --bg-app: #0d1117;
+        --bg-panel: #161b22;
+        --bg-panel-hover: #1c2128;
+        --bg-control: #21262d;
+        --bg-selected: #2d333b;
+        --bg-selected-strong: #1f6feb40;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-muted: #7d8590;
+        --accent: #2f81f7;
+        --accent-hi: #58a6ff;
+        --accent-on: #ffffff;
+        --accent-tint: #1f6feb33;
+        --scroll: #484f58;
+        --scroll-hi: #6e7681;
+        --label: #7d8590;
+        --status-modified: #d29922;
+        --status-added: #3fb950;
+        --status-deleted: #f85149;
+        --status-renamed: #2f81f7;
+        --branch-bg: #1f6feb;
+        --branch-fg: #ffffff;
+      }
+
       * {
         margin: 0;
         padding: 0;
@@ -22,8 +89,8 @@
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
           "Helvetica Neue", sans-serif;
-        background: #1e0528;
-        color: #ffeeff;
+        background: var(--bg-app);
+        color: var(--text);
         display: flex;
         flex-direction: column;
         height: 100vh;
@@ -36,8 +103,8 @@
         align-items: center;
         justify-content: space-between;
         padding: 8px 16px;
-        background: #1a092d;
-        border-bottom: 1px solid #331354;
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border);
         flex-shrink: 0;
       }
 
@@ -50,12 +117,12 @@
       .repo-name {
         font-weight: 600;
         font-size: 14px;
-        color: #ffeeff;
+        color: var(--text);
       }
 
       .branch-badge {
-        background: #955ae7;
-        color: #fff;
+        background: var(--branch-bg);
+        color: var(--branch-fg);
         padding: 2px 10px;
         border-radius: 10px;
         font-size: 12px;
@@ -64,7 +131,7 @@
 
       .file-count {
         font-size: 12px;
-        color: #E6A6FF;
+        color: var(--text-muted);
       }
 
       .header-actions {
@@ -73,9 +140,9 @@
       }
 
       .btn {
-        background: #320f55;
-        color: #E6A6FF;
-        border: 1px solid #955ae7;
+        background: var(--bg-control);
+        color: var(--text-muted);
+        border: 1px solid var(--accent);
         padding: 4px 12px;
         border-radius: 4px;
         cursor: pointer;
@@ -84,8 +151,29 @@
       }
 
       .btn:hover {
-        background: #955ae7;
-        color: #fff;
+        background: var(--accent);
+        color: var(--accent-on);
+      }
+
+      .theme-picker {
+        background: var(--bg-control);
+        color: var(--text-muted);
+        border: 1px solid var(--accent);
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+        font-family: inherit;
+        outline: none;
+        transition: background 0.15s, color 0.15s;
+      }
+      .theme-picker:hover {
+        background: var(--accent);
+        color: var(--accent-on);
+      }
+      .theme-picker option {
+        background: var(--bg-panel);
+        color: var(--text);
       }
 
       /* ── Layout ── */
@@ -99,8 +187,8 @@
       .sidebar {
         width: 280px;
         min-width: 200px;
-        background: #1a092d;
-        border-right: 1px solid #331354;
+        background: var(--bg-panel);
+        border-right: 1px solid var(--border);
         display: flex;
         flex-direction: column;
         overflow: hidden;
@@ -123,31 +211,31 @@
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.8px;
-        color: #E6A6FF;
+        color: var(--text-muted);
         font-weight: 600;
         cursor: pointer;
-        background: #1a092d;
-        border-bottom: 1px solid #331354;
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border);
         gap: 6px;
         flex-shrink: 0;
         user-select: none;
         transition: background 0.1s;
       }
       .accordion-header:hover {
-        background: #250e3d;
+        background: var(--bg-panel-hover);
       }
       .accordion-chevron {
         font-size: 9px;
         transition: transform 0.15s;
-        color: #955ae7;
+        color: var(--accent);
       }
       .accordion-section.expanded .accordion-chevron {
         transform: rotate(90deg);
       }
       .accordion-badge {
         font-size: 10px;
-        background: #955ae730;
-        color: #E6A6FF;
+        background: var(--accent-tint);
+        color: var(--text-muted);
         padding: 0 6px;
         border-radius: 8px;
         margin-left: auto;
@@ -177,20 +265,20 @@
         white-space: nowrap;
       }
       .tree-item:hover {
-        background: #320f55;
+        background: var(--bg-control);
       }
       .tree-item.active {
-        background: #331354;
+        background: var(--bg-selected);
       }
       .tree-icon {
         font-size: 11px;
         width: 14px;
         text-align: center;
         flex-shrink: 0;
-        color: #955ae7;
+        color: var(--accent);
       }
       .tree-icon.dir {
-        color: #E6A6FF;
+        color: var(--text-muted);
       }
       .tree-name {
         overflow: hidden;
@@ -209,7 +297,7 @@
         font-size: 10px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        color: #b900b1;
+        color: var(--label);
         font-weight: 600;
       }
 
@@ -224,12 +312,12 @@
       }
 
       .file-item:hover {
-        background: #320f55;
+        background: var(--bg-control);
       }
 
       .file-item.active {
-        background: #331354;
-        color: #ffeeff;
+        background: var(--bg-selected);
+        color: var(--text);
       }
 
       .file-status {
@@ -243,16 +331,16 @@
       }
 
       .status-modified {
-        color: #00d9e9;
+        color: var(--status-modified);
       }
       .status-added {
-        color: #05cb0d;
+        color: var(--status-added);
       }
       .status-deleted {
-        color: #aa00a3;
+        color: var(--status-deleted);
       }
       .status-renamed {
-        color: #4d6fff;
+        color: var(--status-renamed);
       }
 
       .file-path {
@@ -265,17 +353,17 @@
 
       .staged-indicator {
         font-size: 9px;
-        color: #05cb0d;
+        color: var(--status-added);
         margin-left: auto;
         flex-shrink: 0;
       }
 
       .file-item.selected {
-        background: #331354;
+        background: var(--bg-selected);
       }
 
       .file-item.selected.active {
-        background: #4a1a6e;
+        background: var(--bg-selected-strong);
       }
 
       .file-action {
@@ -283,7 +371,7 @@
         flex-shrink: 0;
         background: none;
         border: none;
-        color: #E6A6FF;
+        color: var(--text-muted);
         font-size: 14px;
         cursor: pointer;
         padding: 0 4px;
@@ -298,8 +386,8 @@
       }
 
       .file-action:hover {
-        color: #fff;
-        background: #955ae7;
+        color: var(--accent-on);
+        background: var(--accent);
       }
 
       .file-group-header {
@@ -316,7 +404,7 @@
       .group-action {
         background: none;
         border: none;
-        color: #E6A6FF;
+        color: var(--text-muted);
         font-size: 13px;
         cursor: pointer;
         padding: 0 4px;
@@ -331,19 +419,19 @@
       }
 
       .group-action:hover {
-        color: #fff;
-        background: #955ae7;
+        color: var(--accent-on);
+        background: var(--accent);
       }
 
       .bulk-action-bar {
         display: none;
         padding: 6px 12px;
-        background: #320f55;
-        border-bottom: 1px solid #331354;
+        background: var(--bg-control);
+        border-bottom: 1px solid var(--border);
         gap: 6px;
         align-items: center;
         font-size: 12px;
-        color: #E6A6FF;
+        color: var(--text-muted);
       }
 
       .bulk-action-bar.visible {
@@ -351,9 +439,9 @@
       }
 
       .bulk-btn {
-        background: #1a092d;
-        color: #E6A6FF;
-        border: 1px solid #955ae7;
+        background: var(--bg-panel);
+        color: var(--text-muted);
+        border: 1px solid var(--accent);
         padding: 2px 8px;
         border-radius: 3px;
         cursor: pointer;
@@ -361,8 +449,8 @@
       }
 
       .bulk-btn:hover {
-        background: #955ae7;
-        color: #fff;
+        background: var(--accent);
+        color: var(--accent-on);
       }
 
       .bulk-count {
@@ -379,10 +467,10 @@
 
       .editor-header {
         padding: 6px 16px;
-        background: #320f55;
-        border-bottom: 1px solid #331354;
+        background: var(--bg-control);
+        border-bottom: 1px solid var(--border);
         font-size: 13px;
-        color: #E6A6FF;
+        color: var(--text-muted);
         display: flex;
         align-items: center;
         gap: 12px;
@@ -390,8 +478,13 @@
       }
 
       .editor-file-name {
-        color: #ffeeff;
+        color: var(--text);
         font-weight: 500;
+      }
+
+      .editor-language {
+        color: var(--accent);
+        font-size: 11px;
       }
 
       .diff-mode-toggle {
@@ -402,8 +495,8 @@
 
       .toggle-btn {
         background: transparent;
-        color: #E6A6FF;
-        border: 1px solid #955ae7;
+        color: var(--text-muted);
+        border: 1px solid var(--accent);
         padding: 2px 8px;
         border-radius: 3px;
         cursor: pointer;
@@ -411,9 +504,9 @@
       }
 
       .toggle-btn.active {
-        background: #955ae7;
-        color: #fff;
-        border-color: #955ae7;
+        background: var(--accent);
+        color: var(--accent-on);
+        border-color: var(--accent);
       }
 
       #editor {
@@ -427,7 +520,7 @@
         justify-content: center;
         flex-direction: column;
         gap: 12px;
-        color: #E6A6FF;
+        color: var(--text-muted);
       }
 
       .empty-state .icon {
@@ -439,6 +532,19 @@
         font-size: 14px;
       }
 
+      .sidebar-empty,
+      .explorer-loading {
+        padding: 20px 12px;
+        color: var(--text-muted);
+        font-size: 13px;
+        text-align: center;
+      }
+      .explorer-loading {
+        padding: 12px;
+        font-size: 12px;
+        text-align: left;
+      }
+
       /* ── Scrollbar ── */
       ::-webkit-scrollbar {
         width: 8px;
@@ -447,37 +553,37 @@
         background: transparent;
       }
       ::-webkit-scrollbar-thumb {
-        background: #955ae7;
+        background: var(--scroll);
         border-radius: 4px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #E6A6FF;
+        background: var(--scroll-hi);
       }
 
       /* ── Splitter ── */
       .splitter {
         width: 4px;
         cursor: col-resize;
-        background: #331354;
+        background: var(--border);
         flex-shrink: 0;
         transition: background 0.15s;
       }
       .splitter:hover,
       .splitter.dragging {
-        background: #955ae7;
+        background: var(--accent);
       }
 
       /* ── Keyboard shortcut hint ── */
       .shortcut-hint {
         font-size: 11px;
-        color: #E6A6FF;
+        color: var(--text-muted);
         padding: 8px 12px;
-        border-top: 1px solid #331354;
+        border-top: 1px solid var(--border);
       }
 
       kbd {
-        background: #320f55;
-        border: 1px solid #955ae7;
+        background: var(--bg-control);
+        border: 1px solid var(--accent);
         border-radius: 3px;
         padding: 1px 5px;
         font-size: 10px;
@@ -499,7 +605,14 @@
         <button class="btn toggle-btn" id="btnInline" onclick="setDiffMode('inline')">
           Inline
         </button>
-
+        <select class="theme-picker" id="themePicker" onchange="applyTheme(this.value)" title="Theme">
+          <option value="default">Default</option>
+          <option value="github-dark">GitHub Dark</option>
+        </select>
+        <script>
+          document.getElementById("themePicker").value =
+            localStorage.getItem("git-diff-theme") || "default";
+        </script>
       </div>
     </div>
 
@@ -539,7 +652,7 @@
       <div class="editor-container">
         <div class="editor-header" id="editorHeader" style="display: none">
           <span class="editor-file-name" id="editorFileName"></span>
-          <span id="editorLanguage" style="color: #955ae7; font-size: 11px"></span>
+          <span class="editor-language" id="editorLanguage"></span>
         </div>
         <div id="editor">
           <div class="empty-state" id="emptyState">
@@ -586,6 +699,9 @@
             fetch(`${api}/file-tree${rqFirst}${subPath ? `${rqFirst ? '&' : '?'}path=${encodeURIComponent(subPath)}` : ''}`).then((r) => r.json()),
           openInEditor: (filePath) =>
             fetch(`${api}/open-in-editor?path=${encodeURIComponent(filePath)}${rq}`),
+          listThemes: () => fetch(`${api}/themes`).then((r) => r.json()),
+          loadTheme: (id) =>
+            fetch(`${api}/theme?id=${encodeURIComponent(id)}`).then((r) => r.text()),
           onFilesChanged: (callback) => {
             const es = new EventSource(`${api}/events${rqFirst}`);
             es.onmessage = (e) => { if (e.data === "files-changed") callback(); };
@@ -601,16 +717,10 @@
       let currentModifiedModel = null;
       let selectedIndices = new Set();
 
-      // ── Initialize Monaco ──
-      require.config({
-        paths: {
-          vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs",
-        },
-      });
-
-      require(["vs/editor/editor.main"], async function () {
-        // Define a dark theme matching the shell
-        monaco.editor.defineTheme("gitDiffDark", {
+      // ── Themes ──
+      const THEME_KEY = "git-diff-theme";
+      const themes = {
+        default: {
           base: "vs-dark",
           inherit: true,
           rules: [],
@@ -618,7 +728,7 @@
             "editor.background": "#1e0528",
             "editor.foreground": "#ffeeff",
             "editorLineNumber.foreground": "#955ae7",
-            "editorLineNumber.activeForeground": "#E6A6FF",
+            "editorLineNumber.activeForeground": "#e6a6ff",
             "diffEditor.insertedTextBackground": "#05cb0d25",
             "diffEditor.removedTextBackground": "#aa00a325",
             "diffEditor.insertedLineBackground": "#05cb0d15",
@@ -628,10 +738,324 @@
             "editorGutter.deletedBackground": "#aa00a3",
             "scrollbarSlider.background": "#955ae750",
             "scrollbarSlider.hoverBackground": "#955ae7aa",
-            "scrollbarSlider.activeBackground": "#E6A6FF",
+            "scrollbarSlider.activeBackground": "#e6a6ff",
           },
-        });
-        monaco.editor.setTheme("gitDiffDark");
+        },
+        "github-dark": {
+          base: "vs-dark",
+          inherit: true,
+          rules: [
+            { token: "comment", foreground: "8b949e", fontStyle: "italic" },
+            { token: "keyword", foreground: "ff7b72" },
+            { token: "string", foreground: "a5d6ff" },
+            { token: "number", foreground: "79c0ff" },
+            { token: "regexp", foreground: "7ee787" },
+            { token: "type", foreground: "ffa657" },
+            { token: "function", foreground: "d2a8ff" },
+            { token: "variable", foreground: "ffa657" },
+            { token: "constant", foreground: "79c0ff" },
+            { token: "tag", foreground: "7ee787" },
+            { token: "attribute.name", foreground: "79c0ff" },
+            { token: "attribute.value", foreground: "a5d6ff" },
+            { token: "delimiter", foreground: "e6edf3" },
+          ],
+          colors: {
+            "editor.background": "#0d1117",
+            "editor.foreground": "#e6edf3",
+            "editorLineNumber.foreground": "#6e7681",
+            "editorLineNumber.activeForeground": "#e6edf3",
+            "editor.selectionBackground": "#264f78",
+            "editor.lineHighlightBackground": "#161b22",
+            "diffEditor.insertedTextBackground": "#3fb95026",
+            "diffEditor.removedTextBackground": "#f8514926",
+            "diffEditor.insertedLineBackground": "#3fb95020",
+            "diffEditor.removedLineBackground": "#f8514920",
+            "editorGutter.addedBackground": "#3fb950",
+            "editorGutter.modifiedBackground": "#d29922",
+            "editorGutter.deletedBackground": "#f85149",
+            "scrollbarSlider.background": "#484f5880",
+            "scrollbarSlider.hoverBackground": "#6e7681bb",
+            "scrollbarSlider.activeBackground": "#8b949e",
+            "editorWidget.background": "#161b22",
+            "editorWidget.border": "#30363d",
+          },
+        },
+      };
+
+      const THEME_CACHE_KEY = "git-diff-theme-cache";
+      const CSS_VAR_NAMES = [
+        "--bg-app", "--bg-panel", "--bg-panel-hover", "--bg-control",
+        "--bg-selected", "--bg-selected-strong", "--border",
+        "--text", "--text-muted",
+        "--accent", "--accent-hi", "--accent-on", "--accent-tint",
+        "--scroll", "--scroll-hi", "--label",
+        "--status-modified", "--status-added", "--status-deleted", "--status-renamed",
+        "--branch-bg", "--branch-fg",
+      ];
+
+      // ── JetBrains XML → internal theme ──
+      function parseJBTheme(xmlString) {
+        const doc = new DOMParser().parseFromString(xmlString, "application/xml");
+        const scheme = doc.querySelector("scheme");
+        if (!scheme) throw new Error("Invalid JetBrains scheme");
+
+        const colorOpt = (name) => {
+          const v = doc.querySelector(`scheme > colors > option[name="${name}"]`)?.getAttribute("value");
+          return v ? "#" + v.padStart(6, "0").toLowerCase() : null;
+        };
+        const attrOpt = (name) => {
+          const value = doc.querySelector(`scheme > attributes > option[name="${name}"] > value`);
+          if (!value) return null;
+          const out = {};
+          value.querySelectorAll(":scope > option").forEach((o) => {
+            const k = o.getAttribute("name");
+            const v = o.getAttribute("value");
+            if (k && v != null) out[k] = v;
+          });
+          return out;
+        };
+        const hex = (v) => (v ? "#" + v.padStart(6, "0").toLowerCase() : null);
+
+        const text = attrOpt("TEXT") || {};
+        return {
+          name: scheme.getAttribute("name") || "",
+          editorBg: hex(text.BACKGROUND),
+          editorFg: hex(text.FOREGROUND),
+          chrome: {
+            lineNumbers: colorOpt("LINE_NUMBERS_COLOR"),
+            gutter: colorOpt("GUTTER_BACKGROUND"),
+            caret: colorOpt("CARET_COLOR"),
+            caretRow: colorOpt("CARET_ROW_COLOR"),
+            selection: colorOpt("SELECTION_BACKGROUND"),
+            added: colorOpt("ADDED_LINES_COLOR") || colorOpt("FILESTATUS_ADDED"),
+            deleted: colorOpt("DELETED_LINES_COLOR") || colorOpt("FILESTATUS_DELETED"),
+            modified: colorOpt("MODIFIED_LINES_COLOR") || colorOpt("FILESTATUS_MODIFIED"),
+            separator: colorOpt("METHOD_SEPARATORS_COLOR") || colorOpt("INDENT_GUIDE"),
+          },
+          tokens: {
+            keyword: attrOpt("DEFAULT_KEYWORD"),
+            string: attrOpt("DEFAULT_STRING"),
+            number: attrOpt("DEFAULT_NUMBER"),
+            comment: attrOpt("DEFAULT_LINE_COMMENT") || attrOpt("DEFAULT_BLOCK_COMMENT"),
+            function: attrOpt("DEFAULT_FUNCTION_DECLARATION"),
+            type: attrOpt("DEFAULT_CLASS_NAME"),
+            operator: attrOpt("DEFAULT_OPERATION_SIGN"),
+          },
+        };
+      }
+
+      function parseHex(hex) {
+        const h = hex.replace("#", "").padStart(6, "0").slice(-6);
+        if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+        return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+      }
+      function isDarkColor(hex) {
+        const c = parseHex(hex);
+        if (!c) return true;
+        return 0.299 * c.r + 0.587 * c.g + 0.114 * c.b < 128;
+      }
+      function shade(hex, amt) {
+        const c = parseHex(hex);
+        if (!c) return hex;
+        const t = amt < 0 ? 0 : 255;
+        const a = Math.abs(amt);
+        const mix = (n) => Math.round(Math.max(0, Math.min(255, n + (t - n) * a)));
+        return "#" + [mix(c.r), mix(c.g), mix(c.b)].map((n) => n.toString(16).padStart(2, "0")).join("");
+      }
+
+      function jbToTheme(parsed) {
+        const editorBg = parsed.editorBg || "#1e1e1e";
+        const editorFg = parsed.editorFg || "#d4d4d4";
+        const isDark = isDarkColor(editorBg);
+        const ch = parsed.chrome;
+        const tk = parsed.tokens;
+
+        const accent =
+          (tk.keyword?.FOREGROUND ? "#" + tk.keyword.FOREGROUND : null) ||
+          ch.caret ||
+          (tk.function?.FOREGROUND ? "#" + tk.function.FOREGROUND : null) ||
+          (isDark ? "#569cd6" : "#0066cc");
+        const textMuted = ch.lineNumbers || shade(editorFg, isDark ? -0.4 : 0.4);
+        const border = ch.separator || shade(editorBg, isDark ? 0.10 : -0.10);
+        const panelBg = ch.gutter || shade(editorBg, isDark ? -0.04 : 0.03);
+        const panelHover = shade(panelBg, isDark ? 0.05 : -0.05);
+        const controlBg = shade(editorBg, isDark ? 0.08 : -0.08);
+        const selectedBg = ch.selection || shade(editorBg, isDark ? 0.14 : -0.14);
+        const selectedStrong = shade(selectedBg, isDark ? 0.10 : -0.10);
+        const statusAdded = ch.added || (isDark ? "#3fb950" : "#1a7f37");
+        const statusDeleted = ch.deleted || (isDark ? "#f85149" : "#cf222e");
+        const statusModified = ch.modified || (isDark ? "#d29922" : "#9a6700");
+
+        const rules = [];
+        const pushRule = (token, attr) => {
+          if (!attr || !attr.FOREGROUND) return;
+          const r = { token, foreground: attr.FOREGROUND };
+          const ft = parseInt(attr.FONT_TYPE || "0", 10);
+          if (ft === 1) r.fontStyle = "bold";
+          else if (ft === 2) r.fontStyle = "italic";
+          else if (ft === 3) r.fontStyle = "italic bold";
+          rules.push(r);
+        };
+        pushRule("comment", tk.comment);
+        pushRule("keyword", tk.keyword);
+        pushRule("string", tk.string);
+        pushRule("number", tk.number);
+        pushRule("type", tk.type);
+        pushRule("function", tk.function);
+        pushRule("delimiter", tk.operator);
+
+        return {
+          isDark,
+          cssVars: {
+            "--bg-app": editorBg,
+            "--bg-panel": panelBg,
+            "--bg-panel-hover": panelHover,
+            "--bg-control": controlBg,
+            "--bg-selected": selectedBg,
+            "--bg-selected-strong": selectedStrong,
+            "--border": border,
+            "--text": editorFg,
+            "--text-muted": textMuted,
+            "--accent": accent,
+            "--accent-hi": shade(accent, isDark ? 0.20 : -0.20),
+            "--accent-on": "#ffffff",
+            "--accent-tint": accent + "33",
+            "--scroll": textMuted,
+            "--scroll-hi": editorFg,
+            "--label": textMuted,
+            "--status-modified": statusModified,
+            "--status-added": statusAdded,
+            "--status-deleted": statusDeleted,
+            "--status-renamed": statusModified,
+            "--branch-bg": accent,
+            "--branch-fg": "#ffffff",
+          },
+          monaco: {
+            base: isDark ? "vs-dark" : "vs",
+            inherit: true,
+            rules,
+            colors: {
+              "editor.background": editorBg,
+              "editor.foreground": editorFg,
+              "editorLineNumber.foreground": textMuted,
+              "editorLineNumber.activeForeground": editorFg,
+              "editor.selectionBackground": selectedBg,
+              "editor.lineHighlightBackground": ch.caretRow || panelHover,
+              "editorCursor.foreground": ch.caret || accent,
+              "diffEditor.insertedLineBackground": statusAdded + "20",
+              "diffEditor.removedLineBackground": statusDeleted + "20",
+              "diffEditor.insertedTextBackground": statusAdded + "30",
+              "diffEditor.removedTextBackground": statusDeleted + "30",
+              "editorGutter.addedBackground": statusAdded,
+              "editorGutter.modifiedBackground": statusModified,
+              "editorGutter.deletedBackground": statusDeleted,
+              "scrollbarSlider.background": textMuted + "40",
+              "scrollbarSlider.hoverBackground": textMuted + "80",
+              "scrollbarSlider.activeBackground": editorFg,
+            },
+          },
+        };
+      }
+
+      function setInlineVars(vars) {
+        for (const [k, v] of Object.entries(vars)) {
+          document.documentElement.style.setProperty(k, v);
+        }
+      }
+      function clearInlineVars() {
+        for (const k of CSS_VAR_NAMES) {
+          document.documentElement.style.removeProperty(k);
+        }
+      }
+
+      async function applyTheme(id) {
+        const picker = document.getElementById("themePicker");
+
+        if (themes[id]) {
+          document.documentElement.dataset.theme = id;
+          clearInlineVars();
+          if (window.monaco?.editor) monaco.editor.setTheme(`gitDiff-${id}`);
+          localStorage.setItem(THEME_KEY, id);
+          localStorage.removeItem(THEME_CACHE_KEY);
+          if (picker) picker.value = id;
+          return;
+        }
+
+        try {
+          const xml = await window.gitDiff.loadTheme(id);
+          const parsed = parseJBTheme(xml);
+          const internal = jbToTheme(parsed);
+          document.documentElement.dataset.theme = "custom";
+          setInlineVars(internal.cssVars);
+          if (window.monaco?.editor) {
+            monaco.editor.defineTheme("gitDiff-custom", internal.monaco);
+            monaco.editor.setTheme("gitDiff-custom");
+          }
+          localStorage.setItem(THEME_KEY, id);
+          localStorage.setItem(THEME_CACHE_KEY, JSON.stringify({ id, cssVars: internal.cssVars }));
+          if (picker) picker.value = id;
+        } catch (e) {
+          console.error("Failed to load theme", id, e);
+          applyTheme("default");
+        }
+      }
+
+      function prettyThemeName(id) {
+        return id
+          .replace(/-(light|contrast)$/, "")
+          .split(/[-_]/)
+          .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ""))
+          .join(" ");
+      }
+
+      async function populateThemePicker() {
+        const picker = document.getElementById("themePicker");
+        if (!picker || !window.gitDiff.listThemes) return;
+        let list = [];
+        try { list = await window.gitDiff.listThemes(); } catch { return; }
+        if (!list.length) return;
+
+        const dark = [], light = [], contrast = [];
+        for (const id of list) {
+          const item = { id, name: prettyThemeName(id) };
+          if (id.endsWith("-light")) light.push(item);
+          else if (id.endsWith("-contrast")) contrast.push(item);
+          else dark.push(item);
+        }
+
+        const make = (label, items) => {
+          if (!items.length) return null;
+          const og = document.createElement("optgroup");
+          og.label = label;
+          for (const it of items) {
+            const o = document.createElement("option");
+            o.value = it.id;
+            o.textContent = it.name;
+            og.appendChild(o);
+          }
+          return og;
+        };
+
+        const current = picker.value;
+        for (const og of [make("Dark", dark), make("Light", light), make("High Contrast", contrast)]) {
+          if (og) picker.appendChild(og);
+        }
+        picker.value = current;
+      }
+
+      // ── Initialize Monaco ──
+      require.config({
+        paths: {
+          vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs",
+        },
+      });
+
+      require(["vs/editor/editor.main"], async function () {
+        for (const [id, def] of Object.entries(themes)) {
+          monaco.editor.defineTheme(`gitDiff-${id}`, def);
+        }
+        await populateThemePicker();
+        await applyTheme(localStorage.getItem(THEME_KEY) || "default");
 
         await loadRepoInfo();
         await loadFiles();
@@ -659,7 +1083,7 @@
 
         if (currentFiles.length === 0) {
           fileList.innerHTML =
-            '<div style="padding: 20px 12px; color: #E6A6FF; font-size: 13px; text-align: center;">Working tree clean ✓</div>';
+            '<div class="sidebar-empty">Working tree clean ✓</div>';
           return;
         }
 
@@ -752,7 +1176,6 @@
 
         if (!diffEditor) {
           diffEditor = monaco.editor.createDiffEditor(container, {
-            theme: "gitDiffDark",
             readOnly: true,
             renderSideBySide: renderSideBySide,
             automaticLayout: true,
@@ -936,7 +1359,7 @@
 
         if (currentFiles.length === 0) {
           fileList.innerHTML =
-            '<div style="padding: 20px 12px; color: #E6A6FF; font-size: 13px; text-align: center;">Working tree clean ✓</div>';
+            '<div class="sidebar-empty">Working tree clean ✓</div>';
           if (diffEditor) {
             diffEditor.dispose();
             diffEditor = null;
@@ -974,7 +1397,7 @@
 
       async function loadFileTree() {
         const body = document.getElementById("explorerBody");
-        body.innerHTML = '<div style="padding: 12px; color: #955ae7; font-size: 12px;">Loading...</div>';
+        body.innerHTML = '<div class="explorer-loading">Loading...</div>';
         const tree = await window.gitDiff.getFileTree();
         explorerLoaded = true;
         body.innerHTML = "";
