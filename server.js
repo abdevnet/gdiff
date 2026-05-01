@@ -43,7 +43,12 @@ function openInEditor(absPath) {
   );
   if (!parts.some((p) => p === absPath)) parts.push(absPath);
   const exe = parts.shift();
-  spawn(exe, parts, { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  console.log(`gdiff: opening editor → ${exe} ${parts.map((p) => JSON.stringify(p)).join(" ")}`);
+  const child = spawn(exe, parts, { detached: true, stdio: "ignore" });
+  child.on("error", (e) =>
+    console.error(`gdiff: editor spawn failed (${exe}): ${e.message}`),
+  );
+  child.unref();
 }
 
 // ── Bundled JetBrains themes ──
