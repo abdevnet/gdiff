@@ -120,6 +120,30 @@
         color: var(--text);
       }
 
+      .repo-input {
+        background: transparent;
+        color: var(--text);
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 3px 8px;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        width: 360px;
+        outline: none;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .repo-input:hover {
+        border-color: var(--border);
+      }
+      .repo-input:focus {
+        border-color: var(--accent);
+        background: var(--bg-control);
+      }
+      .repo-input.invalid {
+        border-color: var(--status-deleted);
+      }
+
       .branch-badge {
         background: var(--branch-bg);
         color: var(--branch-fg);
@@ -594,7 +618,14 @@
   <body>
     <div class="header">
       <div class="repo-info">
-        <span class="repo-name" id="repoName">—</span>
+        <input
+          class="repo-input"
+          id="repoInput"
+          spellcheck="false"
+          autocomplete="off"
+          title="Press Enter to switch folder"
+          onkeydown="if (event.key === 'Enter') { event.preventDefault(); changeRepo(this.value); this.blur(); }"
+        />
         <span class="branch-badge" id="branchName">—</span>
         <span class="file-count" id="fileCount"></span>
       </div>
@@ -605,7 +636,7 @@
         <button class="btn toggle-btn" id="btnInline" onclick="setDiffMode('inline')">
           Inline
         </button>
-        <select class="theme-picker" id="themePicker" onchange="applyTheme(this.value)" title="Theme">
+        <select class="theme-picker" id="themePicker" onchange="onThemePickerChange(this.value)" title="Theme">
           <optgroup label="Built-in">
             <option value="default">Ghostty Purple</option>
             <option value="github-dark">GitHub Dark</option>
@@ -645,7 +676,7 @@
         </div>
         <div class="shortcut-hint">
           <kbd>↑</kbd> <kbd>↓</kbd> navigate &nbsp;
-          <kbd>Z</kbd> open in Zed &nbsp;
+          <kbd>Z</kbd> open in editor &nbsp;
           <kbd>R</kbd> refresh
         </div>
       </div>
@@ -702,6 +733,17 @@
           openInEditor: (filePath) =>
             fetch(`${api}/open-in-editor?path=${encodeURIComponent(filePath)}${rq}`),
           getThemes: () => fetch(`${api}/themes`).then((r) => r.json()),
+          getConfig: () => fetch(`${api}/config`).then((r) => r.json()),
+          setConfig: (partial) =>
+            fetch(`${api}/config`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(partial),
+            }).then((r) => r.json()),
+          setRepo: (newRepo) => {
+            window.location.search = "?repo=" + encodeURIComponent(newRepo);
+            return new Promise(() => {}); // never resolves; navigation takes over
+          },
           onFilesChanged: (callback) => {
             const es = new EventSource(`${api}/events${rqFirst}`);
             es.onmessage = (e) => { if (e.data === "files-changed") callback(); };
@@ -950,6 +992,13 @@
         if (picker) picker.value = id;
       }
 
+      function onThemePickerChange(id) {
+        applyTheme(id);
+        if (window.gitDiff.setConfig) {
+          window.gitDiff.setConfig({ theme: id }).catch(() => {});
+        }
+      }
+
       function displayThemeName(id, data) {
         const raw = (data && data.name) || id;
         return raw.replace(/\s*\(rainglow\)\s*$/i, "");
@@ -1004,8 +1053,15 @@
           monaco.editor.defineTheme(`gitDiff-${id}`, def);
         }
         await populateThemePicker();
-        await applyTheme(localStorage.getItem(THEME_KEY) || "default");
 
+        let savedTheme = localStorage.getItem(THEME_KEY) || "default";
+        try {
+          const cfg = (await window.gitDiff.getConfig?.()) || {};
+          if (cfg.theme) savedTheme = cfg.theme;
+        } catch {}
+        await applyTheme(savedTheme);
+
+        wireRepoInput();
         await loadRepoInfo();
         await loadFiles();
 
@@ -1016,8 +1072,63 @@
       // ── Load repo info ──
       async function loadRepoInfo() {
         const info = await window.gitDiff.getRepoInfo();
-        document.getElementById("repoName").textContent = info.repoName;
+        const input = document.getElementById("repoInput");
+        if (input && document.activeElement !== input) {
+          input.value = info.repoPath || info.repoName || "";
+        }
         document.getElementById("branchName").textContent = info.branch;
+      }
+
+      function fileUriToPath(uri) {
+        let p = uri.trim().replace(/^file:\/\/(?:localhost)?/i, "");
+        try { p = decodeURI(p); } catch {}
+        if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1); // Windows: /C:/... → C:/...
+        return p.replace(/[\\\/]+$/, ""); // strip trailing slashes
+      }
+
+      function wireRepoInput() {
+        const input = document.getElementById("repoInput");
+        if (!input) return;
+        input.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "link";
+        });
+        input.addEventListener("drop", (e) => {
+          e.preventDefault();
+          let dropped = "";
+          const f = e.dataTransfer.files[0];
+          if (f && f.path) dropped = f.path; // Electron
+          if (!dropped) {
+            const uri = e.dataTransfer.getData("text/uri-list");
+            const first = uri && uri.split(/\r?\n/).find((l) => l && !l.startsWith("#"));
+            if (first) dropped = fileUriToPath(first);
+          }
+          if (!dropped) dropped = (e.dataTransfer.getData("text/plain") || "").trim();
+          if (!dropped) return;
+          input.value = dropped;
+          changeRepo(dropped);
+        });
+      }
+
+      async function changeRepo(newPath) {
+        const input = document.getElementById("repoInput");
+        const trimmed = (newPath || "").trim();
+        if (!trimmed) return;
+        try {
+          const result = await window.gitDiff.setRepo(trimmed);
+          if (result && result.ok === false) {
+            input?.classList.add("invalid");
+            return;
+          }
+          input?.classList.remove("invalid");
+          // Electron: setRepo returns { ok: true }, refresh the data in place.
+          // Browser: setRepo navigates and never resolves, so this code path
+          // doesn't run there.
+          await loadRepoInfo();
+          await refresh();
+        } catch (e) {
+          input?.classList.add("invalid");
+        }
       }
 
       // ── Load changed files ──
@@ -1415,6 +1526,8 @@
 
       // ── Keyboard navigation ──
       document.addEventListener("keydown", (e) => {
+        const tag = document.activeElement?.tagName;
+        if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
         if (e.key === "ArrowDown" && currentFiles.length > 0) {
           e.preventDefault();
           selectFile(Math.min(currentIndex + 1, currentFiles.length - 1));
@@ -1424,16 +1537,14 @@
         } else if (e.key.toLowerCase() === "z" && !e.metaKey && !e.ctrlKey) {
           e.preventDefault();
           e.stopPropagation();
-          if (document.activeElement.tagName !== "INPUT" && currentIndex >= 0) {
+          if (currentIndex >= 0) {
             const file = currentFiles[currentIndex];
             if (file && window.gitDiff.openInEditor) {
               window.gitDiff.openInEditor(file.path);
             }
           }
         } else if (e.key.toLowerCase() === "r" && !e.metaKey && !e.ctrlKey) {
-          if (document.activeElement.tagName !== "INPUT") {
-            refresh();
-          }
+          refresh();
         }
       }, true);
     </script>

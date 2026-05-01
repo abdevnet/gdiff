@@ -1,7 +1,49 @@
-const { execSync } = require("child_process");
+const { execSync, spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const http = require("http");
+
+// ── User config (~/.gdiff-viewer.json) ──
+
+const configPath = path.join(os.homedir(), ".gdiff-viewer.json");
+
+const DEFAULT_EDITOR_COMMANDS = {
+  darwin: "open -a Zed {file}",
+  win32: "notepad {file}",
+  linux: "xdg-open {file}",
+};
+
+function getConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function setConfig(partial) {
+  const merged = { ...getConfig(), ...partial };
+  fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
+  return merged;
+}
+
+function getEditorCommand() {
+  const c = getConfig();
+  return c.editorCommand
+    || DEFAULT_EDITOR_COMMANDS[process.platform]
+    || "xdg-open {file}";
+}
+
+function openInEditor(absPath) {
+  const cmd = getEditorCommand();
+  const parts = cmd.split(/\s+/).filter(Boolean).map((p) =>
+    p === "{file}" ? absPath : p,
+  );
+  if (!parts.some((p) => p === absPath)) parts.push(absPath);
+  const exe = parts.shift();
+  spawn(exe, parts, { detached: true, stdio: "ignore", windowsHide: true }).unref();
+}
 
 // ── Bundled JetBrains themes ──
 
@@ -221,6 +263,7 @@ module.exports = {
   git, getChangedFiles, getFileDiff, getFileContent,
   detectLanguage, stageFiles, unstageFiles, discardFiles, getFileTree, getRepoInfo,
   getThemes,
+  getConfig, setConfig, openInEditor,
   startServer, repoPath: defaultRepoPath,
 };
 
@@ -312,12 +355,13 @@ function startServer(port) {
     } else if (url.pathname === "/api/open-in-editor") {
       const repo = resolveRepo(url);
       const filePath = url.searchParams.get("path");
-      const abs = path.resolve(repo, filePath);
-      const { spawn } = require("child_process");
-      if (process.platform === "darwin") spawn("open", [abs]);
-      else if (process.platform === "win32") spawn("cmd", ["/c", "start", "", abs], { shell: true });
-      else spawn("xdg-open", [abs]);
+      openInEditor(path.resolve(repo, filePath));
       json(res, { ok: true });
+    } else if (url.pathname === "/api/config" && req.method === "GET") {
+      json(res, getConfig());
+    } else if (url.pathname === "/api/config" && req.method === "POST") {
+      const body = await readBody(req);
+      json(res, setConfig(body));
     } else {
       res.writeHead(404);
       res.end("Not found");

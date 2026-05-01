@@ -1,20 +1,20 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
-const { execFile } = require("child_process");
 const path = require("path");
 const {
   getChangedFiles, getFileDiff, detectLanguage,
-  stageFiles, unstageFiles, getFileTree, getRepoInfo, repoPath,
-  getThemes,
+  stageFiles, unstageFiles, discardFiles, getFileTree, getRepoInfo,
+  repoPath, getThemes, getConfig, setConfig, openInEditor,
 } = require("./server");
 
 let mainWindow;
+let currentRepo = repoPath;
 
 function createWindow() {
   const iconPath = path.join(__dirname, "icon.png");
   const opts = {
     width: 1400,
     height: 900,
-    title: `Git Diff Viewer — ${path.basename(repoPath)}`,
+    title: `Git Diff Viewer — ${path.basename(currentRepo)}`,
     backgroundColor: "#1e0528",
     webPreferences: {
       nodeIntegration: false,
@@ -32,26 +32,52 @@ function createWindow() {
 }
 
 // IPC Handlers
-ipcMain.handle("get-changed-files", () => getChangedFiles());
+ipcMain.handle("get-changed-files", () => getChangedFiles(currentRepo));
 
 ipcMain.handle("get-file-diff", (_, filePath, staged) => {
-  const { original, modified } = getFileDiff(filePath, staged);
+  const { original, modified } = getFileDiff(filePath, staged, currentRepo);
   const language = detectLanguage(filePath);
   return { original, modified, language, filePath };
 });
 
-ipcMain.handle("get-repo-info", () => getRepoInfo());
-ipcMain.handle("refresh", () => getChangedFiles());
-ipcMain.handle("stage-files", (_, filePaths) => stageFiles(filePaths));
-ipcMain.handle("unstage-files", (_, filePaths) => unstageFiles(filePaths));
-ipcMain.handle("get-file-tree", (_, subPath) => getFileTree(subPath ? path.join(repoPath, subPath) : undefined, undefined, subPath || ""));
+ipcMain.handle("get-repo-info", () => getRepoInfo(currentRepo));
+ipcMain.handle("refresh", () => getChangedFiles(currentRepo));
+ipcMain.handle("stage-files", (_, filePaths) => stageFiles(filePaths, currentRepo));
+ipcMain.handle("unstage-files", (_, filePaths) => unstageFiles(filePaths, currentRepo));
+ipcMain.handle("discard-files", (_, filePaths) => discardFiles(filePaths, currentRepo));
+ipcMain.handle("get-file-tree", (_, subPath) =>
+  getFileTree(
+    subPath ? path.join(currentRepo, subPath) : currentRepo,
+    currentRepo,
+    subPath || "",
+  ),
+);
 ipcMain.handle("get-themes", () => getThemes());
+ipcMain.handle("get-config", () => getConfig());
+ipcMain.handle("set-config", (_, partial) => setConfig(partial));
 ipcMain.handle("open-in-editor", (_, filePath) => {
-  const abs = path.resolve(repoPath, filePath);
-  execFile("open", ["-a", "Zed", abs]);
+  openInEditor(path.resolve(currentRepo, filePath));
 });
 
-// File watcher — watch tracked files + git index (not entire repo tree)
+ipcMain.handle("set-repo", async (_, newRepo) => {
+  const { execSync } = require("child_process");
+  let resolved;
+  try {
+    resolved = execSync("git rev-parse --show-toplevel", {
+      cwd: path.resolve(newRepo), encoding: "utf-8",
+    }).trim();
+  } catch {
+    return { ok: false, error: "not a git repository" };
+  }
+  currentRepo = resolved;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setTitle(`Git Diff Viewer — ${path.basename(currentRepo)}`);
+  }
+  await restartWatcher();
+  return { ok: true, repoPath: currentRepo };
+});
+
+// File watcher
 let watchDebounce = null;
 let fileWatcher = null;
 let gitWatcher = null;
@@ -61,8 +87,8 @@ async function startWatcher() {
   const chokidar = await import("chokidar");
 
   const trackedFiles = execSync("git ls-files", {
-    cwd: repoPath, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024,
-  }).trim().split("\n").filter(Boolean).map(f => path.join(repoPath, f));
+    cwd: currentRepo, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024,
+  }).trim().split("\n").filter(Boolean).map(f => path.join(currentRepo, f));
 
   function notify() {
     clearTimeout(watchDebounce);
@@ -80,11 +106,18 @@ async function startWatcher() {
   fileWatcher.on("error", () => {});
 
   gitWatcher = chokidar.watch([
-    path.join(repoPath, ".git", "index"),
-    path.join(repoPath, ".git", "HEAD"),
+    path.join(currentRepo, ".git", "index"),
+    path.join(currentRepo, ".git", "HEAD"),
   ], { ignoreInitial: true, persistent: true });
   gitWatcher.on("all", notify);
   gitWatcher.on("error", () => {});
+}
+
+async function restartWatcher() {
+  await Promise.all([fileWatcher?.close(), gitWatcher?.close()]);
+  fileWatcher = null;
+  gitWatcher = null;
+  await startWatcher();
 }
 
 app.whenReady().then(() => {
