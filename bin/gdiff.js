@@ -63,33 +63,21 @@ function openBrowser(url) {
 }
 
 async function main() {
-  // If a gdiff is already running, just point a new browser window at it.
+  // If a gdiff is already running on this port, open a new browser window
+  // pointing at it (typically invoked from a second terminal).
   if (await isPortInUse(port)) {
     console.log(`gdiff already running on port ${port} — opening ${path.basename(repoPath)}`);
     openBrowser(repoUrl);
     process.exit(0);
   }
 
-  // On Windows, re-spawn detached so the launching terminal isn't held.
-  if (process.platform === "win32" && !process.env.GDIFF_DETACHED) {
-    console.log(`gdiff serving ${path.basename(repoPath)} at http://localhost:${port}`);
-    console.log("(running in background — stop via Task Manager: node.exe)");
-    const child = spawn(process.execPath, [__filename, ...process.argv.slice(2)], {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      env: { ...process.env, GDIFF_DETACHED: "1" },
-    });
-    child.unref();
-    process.exit(0);
-  }
-
+  // Foreground: detaching from npx doesn't survive npm cache cleanup, so
+  // the server runs in this process and Ctrl-C stops it.
   process.argv[2] = repoPath;
   const { startServer } = require(path.join(__dirname, "..", "server.js"));
   const { port: actualPort } = await startServer(port);
-  if (!process.env.GDIFF_DETACHED) {
-    console.log(`gdiff serving ${path.basename(repoPath)} at http://localhost:${actualPort}`);
-  }
+  console.log(`gdiff serving ${path.basename(repoPath)} at http://localhost:${actualPort}`);
+  console.log("press Ctrl-C to stop");
   openBrowser(`http://localhost:${actualPort}?repo=${encodeURIComponent(repoPath)}`);
 }
 
