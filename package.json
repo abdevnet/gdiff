@@ -4,7 +4,8 @@
   "description": "Lightweight Monaco-based git diff viewer — runs in your browser",
   "main": "main.js",
   "bin": {
-    "gdiff": "bin/gdiff.js"
+    "gdiff": "bin/gdiff.js",
+    "gdiff-viewer": "bin/gdiff.js"
   },
   "files": [
     "bin/",
