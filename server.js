@@ -227,7 +227,7 @@ module.exports = {
 // ── HTTP Server (only when run directly) ──
 
 function startServer(port) {
-  port = port || parseInt(process.env.PORT || "3420", 10);
+  if (port == null) port = parseInt(process.env.PORT || "3420", 10);
   const sseClients = new Map(); // repo -> Set<res>
 
   function json(res, data) {

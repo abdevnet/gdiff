@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 const path = require("path");
-const net = require("net");
 const { execSync, spawn } = require("child_process");
 
 const repoArg = process.argv[2] || process.cwd();
@@ -14,17 +13,9 @@ try {
   process.exit(1);
 }
 
-const port = parseInt(process.env.PORT || "3420", 10);
-const repoUrl = `http://localhost:${port}?repo=${encodeURIComponent(repoPath)}`;
-
-function isPortInUse(p) {
-  return new Promise((resolve) => {
-    const tester = net.createServer()
-      .once("error", () => resolve(true))
-      .once("listening", () => tester.close(() => resolve(false)))
-      .listen(p, "127.0.0.1");
-  });
-}
+// Bind to an ephemeral port unless PORT is explicitly set, so multiple
+// invocations never collide.
+const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 0;
 
 function openBrowser(url) {
   const fs = require("fs");
@@ -63,22 +54,13 @@ function openBrowser(url) {
 }
 
 async function main() {
-  // If a gdiff is already running on this port, open a new browser window
-  // pointing at it (typically invoked from a second terminal).
-  if (await isPortInUse(port)) {
-    console.log(`gdiff already running on port ${port} — opening ${path.basename(repoPath)}`);
-    openBrowser(repoUrl);
-    process.exit(0);
-  }
-
-  // Foreground: detaching from npx doesn't survive npm cache cleanup, so
-  // the server runs in this process and Ctrl-C stops it.
   process.argv[2] = repoPath;
   const { startServer } = require(path.join(__dirname, "..", "server.js"));
   const { port: actualPort } = await startServer(port);
+  const url = `http://localhost:${actualPort}?repo=${encodeURIComponent(repoPath)}`;
   console.log(`gdiff serving ${path.basename(repoPath)} at http://localhost:${actualPort}`);
   console.log("press Ctrl-C to stop");
-  openBrowser(`http://localhost:${actualPort}?repo=${encodeURIComponent(repoPath)}`);
+  openBrowser(url);
 }
 
 process.on("SIGINT", () => process.exit(0));
