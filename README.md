@@ -57,7 +57,7 @@ Default `editorCommand`:
 | Platform | Command |
 |----------|---------|
 | macOS | `open -a Zed {file}` |
-| Windows | `notepad {file}` |
+| Windows | `notepad.exe {file}` |
 | Linux | `xdg-open {file}` |
 
 Examples:

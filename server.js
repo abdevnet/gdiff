@@ -11,7 +11,7 @@ const configPath = path.join(os.homedir(), ".gdiff-viewer.json");
 
 const DEFAULT_EDITOR_COMMANDS = {
   darwin: "open -a Zed {file}",
-  win32: "notepad {file}",
+  win32: "notepad.exe {file}",
   linux: "xdg-open {file}",
 };
 

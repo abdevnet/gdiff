@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <title>Git Diff Viewer</title>
+    <link rel="icon" type="image/png" href="favicon.png" />
     <script>
       (function () {
         var id = document.documentElement.dataset.themeInit || "default";
@@ -152,6 +153,7 @@
       .header-actions {
         display: flex;
         gap: 8px;
+        align-items: center;
       }
 
       .btn {
@@ -168,6 +170,12 @@
       .btn:hover {
         background: var(--accent);
         color: var(--accent-on);
+      }
+
+      .theme-label {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-left: 4px;
       }
 
       .theme-picker {
@@ -627,6 +635,7 @@
         <button class="btn toggle-btn" id="btnInline" onclick="setDiffMode('inline')">
           Inline
         </button>
+        <span class="theme-label">Theme</span>
         <select class="theme-picker" id="themePicker" onchange="onThemePickerChange(this.value)" title="Theme">
           <optgroup label="Built-in">
             <option value="default">Ghostty Purple</option>
