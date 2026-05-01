@@ -300,7 +300,14 @@ function startServer(port) {
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
-      const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf-8");
+      let html = fs.readFileSync(path.join(__dirname, "index.html"), "utf-8");
+      const cfgTheme = (getConfig().theme || "default").replace(/[^a-zA-Z0-9._-]/g, "");
+      // Inject the saved theme so the very first paint is correct, even when
+      // localStorage is empty (e.g. fresh ephemeral-port origin on Windows).
+      html = html.replace(
+        /<html lang="en">/,
+        `<html lang="en" data-theme-init="${cfgTheme}">`,
+      );
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(html);
     } else if (url.pathname === "/favicon.png") {

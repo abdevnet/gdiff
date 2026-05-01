@@ -6,7 +6,8 @@
     <title>Git Diff Viewer</title>
     <script>
       (function () {
-        var id = localStorage.getItem("git-diff-theme") || "default";
+        var injected = document.documentElement.dataset.themeInit;
+        var id = injected || localStorage.getItem("git-diff-theme") || "default";
         var builtIn = id === "default" || id === "github-dark";
         document.documentElement.dataset.theme = builtIn ? id : "custom";
         if (!builtIn) {
@@ -759,6 +760,15 @@
       let currentModifiedModel = null;
       let selectedIndices = new Set();
 
+      // ── Pre-fire the critical fetches now, in parallel with Monaco loading ──
+      const prefetch = {
+        config: window.gitDiff.getConfig
+          ? window.gitDiff.getConfig().catch(() => ({}))
+          : Promise.resolve({}),
+        repoInfo: window.gitDiff.getRepoInfo().catch(() => ({})),
+        changedFiles: window.gitDiff.getChangedFiles().catch(() => []),
+      };
+
       // ── Themes ──
       const THEME_KEY = "git-diff-theme";
       const themes = {
@@ -961,7 +971,19 @@
         }
       }
 
-      function applyTheme(id) {
+      let bundlePromise = null;
+      function loadBundle() {
+        if (Object.keys(bundledThemes).length) return Promise.resolve(bundledThemes);
+        if (!bundlePromise && window.gitDiff.getThemes) {
+          bundlePromise = window.gitDiff
+            .getThemes()
+            .then((b) => (bundledThemes = b || {}))
+            .catch(() => (bundledThemes = {}));
+        }
+        return bundlePromise || Promise.resolve({});
+      }
+
+      async function applyTheme(id) {
         const picker = document.getElementById("themePicker");
 
         if (themes[id]) {
@@ -974,6 +996,7 @@
           return;
         }
 
+        await loadBundle();
         const data = bundledThemes[id];
         if (!data) return applyTheme("default");
 
@@ -1004,12 +1027,15 @@
         return raw.replace(/\s*\(rainglow\)\s*$/i, "");
       }
 
+      let pickerPopulated = false;
       async function populateThemePicker() {
+        if (pickerPopulated) return;
         const picker = document.getElementById("themePicker");
-        if (!picker || !window.gitDiff.getThemes) return;
-        try { bundledThemes = await window.gitDiff.getThemes(); } catch { return; }
+        if (!picker) return;
+        await loadBundle();
         const ids = Object.keys(bundledThemes);
         if (!ids.length) return;
+        pickerPopulated = true;
 
         const dark = [], light = [], contrast = [];
         for (const id of ids) {
@@ -1052,31 +1078,53 @@
         for (const [id, def] of Object.entries(themes)) {
           monaco.editor.defineTheme(`gitDiff-${id}`, def);
         }
-        await populateThemePicker();
 
-        let savedTheme = localStorage.getItem(THEME_KEY) || "default";
-        try {
-          const cfg = (await window.gitDiff.getConfig?.()) || {};
-          if (cfg.theme) savedTheme = cfg.theme;
-        } catch {}
-        await applyTheme(savedTheme);
+        const [cfg, repoInfo, files] = await Promise.all([
+          prefetch.config,
+          prefetch.repoInfo,
+          prefetch.changedFiles,
+        ]);
+
+        const savedTheme =
+          (cfg && cfg.theme) ||
+          document.documentElement.dataset.themeInit ||
+          localStorage.getItem(THEME_KEY) ||
+          "default";
 
         wireRepoInput();
-        await loadRepoInfo();
-        await loadFiles();
+        renderRepoInfo(repoInfo);
 
-        // Auto-refresh when files change on disk
+        // Apply theme in parallel with file rendering. Built-ins are sync;
+        // JetBrains themes lazy-load themes.json on demand.
+        const themePromise = applyTheme(savedTheme);
+        renderFiles(files);
+        await themePromise;
+
+        // Lazy-populate the picker on first interaction.
+        const picker = document.getElementById("themePicker");
+        if (picker) {
+          const lazy = () => {
+            picker.removeEventListener("mousedown", lazy);
+            picker.removeEventListener("focus", lazy);
+            populateThemePicker();
+          };
+          picker.addEventListener("mousedown", lazy);
+          picker.addEventListener("focus", lazy);
+        }
+
         window.gitDiff.onFilesChanged(() => autoRefresh());
       });
 
-      // ── Load repo info ──
-      async function loadRepoInfo() {
-        const info = await window.gitDiff.getRepoInfo();
+      // ── Render repo info ──
+      function renderRepoInfo(info) {
         const input = document.getElementById("repoInput");
         if (input && document.activeElement !== input) {
-          input.value = info.repoPath || info.repoName || "";
+          input.value = (info && (info.repoPath || info.repoName)) || "";
         }
-        document.getElementById("branchName").textContent = info.branch;
+        document.getElementById("branchName").textContent = (info && info.branch) || "";
+      }
+      async function loadRepoInfo() {
+        renderRepoInfo(await window.gitDiff.getRepoInfo());
       }
 
       function fileUriToPath(uri) {
@@ -1131,9 +1179,9 @@
         }
       }
 
-      // ── Load changed files ──
-      async function loadFiles() {
-        currentFiles = await window.gitDiff.getChangedFiles();
+      // ── Render changed files ──
+      function renderFiles(files) {
+        currentFiles = files || [];
         const fileList = document.getElementById("fileList");
         fileList.innerHTML = "";
 
@@ -1148,10 +1196,10 @@
         }
 
         renderFileGroups(fileList);
-
-        if (currentFiles.length > 0) {
-          selectFile(0);
-        }
+        selectFile(0);
+      }
+      async function loadFiles() {
+        renderFiles(await window.gitDiff.getChangedFiles());
       }
 
       function renderFileGroups(fileList) {
