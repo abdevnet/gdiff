@@ -1,5 +1,7 @@
 # gdiff-viewer
 
+
+
 Lightweight git diff viewer using Monaco's diff editor — VS Code's diff view in your browser. No build step, no heavy dependencies.
 
 ![gdiff-viewer screenshot](gdiff.png)
@@ -74,14 +76,15 @@ Both the surrounding UI chrome (sidebar, header, picker) and the Monaco editor a
 
 ## Architecture
 
-No build step — Monaco loads from CDN.
+No build step. Monaco and the JetBrains theme data ship inside the package, served locally with gzip — no CDN, no network round trips for the editor.
 
 | File | Purpose |
 |------|---------|
 | `bin/gdiff.js` | CLI entry — starts server on an ephemeral port, opens Chrome `--app` |
-| `server.js` | HTTP API — git commands, file serving, SSE file watcher, config persistence, theme bundle |
+| `server.js` | HTTP API — git commands, file serving, SSE file watcher, config persistence, theme bundle, Monaco static serving |
 | `main.js` / `preload.js` | Electron entry — same logic as the HTTP server but over IPC |
-| `index.html` | UI + Monaco diff editor (loads from CDN) |
+| `index.html` | UI + Monaco diff editor (loads from `vs/`) |
+| `vs/` | Bundled Monaco 0.44.0 (`min/vs` minus the IntelliSense workers we don't need for read-only diffs) |
 | `themes.json` | 326 pre-extracted JetBrains color schemes |
 | `scripts/build-themes.js` | One-shot builder: `node scripts/build-themes.js [xml-dir]` regenerates `themes.json` |
 

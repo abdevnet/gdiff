@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const http = require("http");
+const zlib = require("zlib");
 
 // ── User config (~/.gdiff-viewer.json) ──
 
@@ -269,6 +270,52 @@ module.exports = {
 
 // ── HTTP Server (only when run directly) ──
 
+// Serve bundled Monaco from /vs/* with in-memory gzip cache. Compressing once
+// per server lifetime keeps repeat requests fast; cold start is one-shot.
+const _vsCache = new Map();
+const VS_TYPES = {
+  ".js": "application/javascript",
+  ".css": "text/css",
+  ".ttf": "font/ttf",
+  ".svg": "image/svg+xml",
+  ".json": "application/json",
+};
+function serveVs(req, res, pathname) {
+  const rel = pathname.replace(/^\//, "");
+  const file = path.join(__dirname, rel);
+  const root = path.join(__dirname, "vs") + path.sep;
+  if (!file.startsWith(root) || !fs.existsSync(file)) {
+    res.writeHead(404); res.end(); return;
+  }
+  let cached = _vsCache.get(file);
+  if (!cached) {
+    const raw = fs.readFileSync(file);
+    const ext = path.extname(file);
+    const compressible = ext === ".js" || ext === ".css" || ext === ".svg";
+    cached = {
+      raw,
+      gz: compressible ? zlib.gzipSync(raw) : null,
+      type: VS_TYPES[ext] || "application/octet-stream",
+    };
+    _vsCache.set(file, cached);
+  }
+  const acceptsGzip = (req.headers["accept-encoding"] || "").includes("gzip");
+  const headers = {
+    "Content-Type": cached.type,
+    "Cache-Control": "public, max-age=31536000, immutable",
+  };
+  if (acceptsGzip && cached.gz) {
+    headers["Content-Encoding"] = "gzip";
+    headers["Content-Length"] = cached.gz.length;
+    res.writeHead(200, headers);
+    res.end(cached.gz);
+  } else {
+    headers["Content-Length"] = cached.raw.length;
+    res.writeHead(200, headers);
+    res.end(cached.raw);
+  }
+}
+
 function startServer(port) {
   if (port == null) port = parseInt(process.env.PORT || "3420", 10);
   const sseClients = new Map(); // repo -> Set<res>
@@ -310,6 +357,8 @@ function startServer(port) {
       );
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(html);
+    } else if (url.pathname.startsWith("/vs/")) {
+      serveVs(req, res, url.pathname);
     } else if (url.pathname === "/favicon.png") {
       const icon = fs.readFileSync(path.join(__dirname, "favicon.png"));
       res.writeHead(200, { "Content-Type": "image/png" });

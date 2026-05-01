@@ -697,7 +697,7 @@
       </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+    <script src="vs/loader.js"></script>
     <script>
       // ── Dual transport: IPC (Electron) or fetch/SSE (browser) ──
       if (!window.gitDiff) {
@@ -1068,11 +1068,7 @@
       }
 
       // ── Initialize Monaco ──
-      require.config({
-        paths: {
-          vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs",
-        },
-      });
+      require.config({ paths: { vs: "vs" } });
 
       require(["vs/editor/editor.main"], async function () {
         for (const [id, def] of Object.entries(themes)) {
