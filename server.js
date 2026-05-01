@@ -44,7 +44,14 @@ function openInEditor(absPath) {
   if (!parts.some((p) => p === absPath)) parts.push(absPath);
   const exe = parts.shift();
   console.log(`gdiff: opening editor → ${exe} ${parts.map((p) => JSON.stringify(p)).join(" ")}`);
-  const child = spawn(exe, parts, { detached: true, stdio: "ignore" });
+
+  // On Windows, route through `cmd /c start ""` so the launched GUI app
+  // is given normal window focus instead of being left minimized in the
+  // taskbar. The empty "" is required as the title placeholder for start.
+  const isWin = process.platform === "win32";
+  const spawnExe = isWin ? "cmd" : exe;
+  const spawnArgs = isWin ? ["/c", "start", "", exe, ...parts] : parts;
+  const child = spawn(spawnExe, spawnArgs, { detached: true, stdio: "ignore" });
   child.on("error", (e) =>
     console.error(`gdiff: editor spawn failed (${exe}): ${e.message}`),
   );
