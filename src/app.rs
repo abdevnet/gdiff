@@ -42,6 +42,14 @@ pub struct GdiffApp {
     refresh_again: bool,
     editor_command: Option<String>,
     status: Option<String>,
+    status_ok: bool,
+    commit_message: String,
+    commit_in_flight: bool,
+    push_in_flight: bool,
+    ahead: u32,
+    behind: u32,
+    has_upstream: bool,
+    pending_commit_all: bool,
 }
 
 struct LoadedDiff {
@@ -88,6 +96,14 @@ enum Job {
         path: String,
         cmd: Option<String>,
     },
+    Commit {
+        repo: PathBuf,
+        message: String,
+        stage_all: bool,
+    },
+    Push {
+        repo: PathBuf,
+    },
 }
 
 enum Msg {
@@ -110,6 +126,15 @@ enum Msg {
         error: String,
     },
     Error(String),
+    Committed {
+        summary: String,
+        files: Vec<ChangedFile>,
+        info: git::RepoInfo,
+    },
+    Pushed {
+        summary: String,
+        info: git::RepoInfo,
+    },
 }
 
 impl GdiffApp {
@@ -165,6 +190,14 @@ impl GdiffApp {
             refresh_again: false,
             editor_command: cfg.editor_command,
             status: None,
+            status_ok: false,
+            commit_message: String::new(),
+            commit_in_flight: false,
+            push_in_flight: false,
+            ahead: info.ahead,
+            behind: info.behind,
+            has_upstream: info.has_upstream,
+            pending_commit_all: false,
         };
         app.request_refresh();
         let _ = app.job_tx.send(Job::LoadTree {
@@ -257,19 +290,7 @@ impl GdiffApp {
                     // stale, but still mark flight if this was the in-flight refresh
                 }
                 self.refresh_in_flight = false;
-                if self.repo != info.repo_path {
-                    self._watch.set_repo(info.repo_path.clone());
-                    self.explorer = None;
-                    self.explorer_expanded.clear();
-                }
-                self.repo = info.repo_path.clone();
-                self.repo_input = info.repo_path.display().to_string();
-                self.repo_invalid = false;
-                self.branch = info.branch.clone();
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                    "Git Diff Viewer — {}",
-                    info.repo_name
-                )));
+                self.apply_repo_info(ctx, &info);
 
                 let prev_path = self
                     .selected
@@ -336,10 +357,98 @@ impl GdiffApp {
             Msg::Tree(tree) => self.explorer = Some(tree),
             Msg::RepoFailed { error } => {
                 self.repo_invalid = true;
-                self.status = Some(error);
+                self.set_status(error, false);
             }
-            Msg::Error(e) => self.status = Some(e),
+            Msg::Error(e) => {
+                self.commit_in_flight = false;
+                self.push_in_flight = false;
+                self.set_status(e, false);
+            }
+            Msg::Committed {
+                summary,
+                files,
+                info,
+            } => {
+                self.commit_in_flight = false;
+                self.commit_message.clear();
+                self.apply_repo_info(ctx, &info);
+                self.files = files;
+                self.selected = None;
+                self.loaded = None;
+                self.multi.clear();
+                self.set_status(summary, true);
+                if self.files.is_empty() {
+                    // keep empty state
+                } else {
+                    self.select_index(0);
+                }
+            }
+            Msg::Pushed { summary, info } => {
+                self.push_in_flight = false;
+                self.apply_repo_info(ctx, &info);
+                self.set_status(summary, true);
+            }
         }
+    }
+
+    fn apply_repo_info(&mut self, ctx: &egui::Context, info: &git::RepoInfo) {
+        if self.repo != info.repo_path {
+            self._watch.set_repo(info.repo_path.clone());
+            self.explorer = None;
+            self.explorer_expanded.clear();
+        }
+        self.repo = info.repo_path.clone();
+        self.repo_input = info.repo_path.display().to_string();
+        self.repo_invalid = false;
+        self.branch = info.branch.clone();
+        self.ahead = info.ahead;
+        self.behind = info.behind;
+        self.has_upstream = info.has_upstream;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+            "Git Diff Viewer — {}",
+            info.repo_name
+        )));
+    }
+
+    fn set_status(&mut self, msg: impl Into<String>, ok: bool) {
+        self.status = Some(msg.into());
+        self.status_ok = ok;
+    }
+
+    fn request_commit(&mut self, stage_all: bool) {
+        let message = self.commit_message.trim().to_string();
+        if message.is_empty() {
+            self.set_status("Commit message is empty", false);
+            return;
+        }
+        if self.commit_in_flight {
+            return;
+        }
+        let has_staged = self.files.iter().any(|f| f.staged);
+        if !stage_all && !has_staged {
+            if self.files.is_empty() {
+                self.set_status("Nothing to commit", false);
+                return;
+            }
+            self.pending_commit_all = true;
+            return;
+        }
+        self.commit_in_flight = true;
+        let _ = self.job_tx.send(Job::Commit {
+            repo: self.repo.clone(),
+            message,
+            stage_all,
+        });
+    }
+
+    fn request_push(&mut self) {
+        if self.push_in_flight {
+            return;
+        }
+        self.push_in_flight = true;
+        let _ = self.job_tx.send(Job::Push {
+            repo: self.repo.clone(),
+        });
     }
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
@@ -401,6 +510,7 @@ impl eframe::App for GdiffApp {
         self.handle_drops(&ctx);
         self.handle_keys(&ctx);
         self.discard_modal(ui);
+        self.commit_all_modal(ui);
 
         let theme = self.theme.clone();
 
@@ -424,7 +534,13 @@ impl eframe::App for GdiffApp {
                     .inner_margin(Margin::symmetric(0, 0))
                     .stroke(Stroke::new(1.0, theme.border)),
             )
-            .show(ui, |ui| self.sidebar(ui, &theme));
+            .show(ui, |ui| {
+                // Lock width to the panel so children cannot grow it each frame.
+                let w = ui.available_width();
+                ui.set_min_width(w);
+                ui.set_max_width(w);
+                self.sidebar(ui, &theme);
+            });
 
         egui::CentralPanel::default()
             .frame(Frame::new().fill(theme.editor_bg).inner_margin(0))
@@ -571,6 +687,9 @@ impl GdiffApp {
     }
 
     fn sidebar(&mut self, ui: &mut Ui, theme: &Theme) {
+        let w = ui.available_width();
+        ui.set_min_width(w);
+        ui.set_max_width(w);
         egui::Panel::bottom("shortcut_hint")
             .resizable(false)
             .show_separator_line(true)
@@ -654,7 +773,16 @@ impl GdiffApp {
                     .color(theme.text_muted)
                     .size(10.0),
             );
+            if self.ahead > 0 || self.behind > 0 {
+                ui.label(
+                    RichText::new(format!("↑{} ↓{}", self.ahead, self.behind))
+                        .color(theme.text_muted)
+                        .size(10.0),
+                );
+            }
         });
+
+        self.commit_box(ui, theme);
 
         if self.multi.len() >= 2 {
             ui.horizontal(|ui| {
@@ -808,7 +936,8 @@ impl GdiffApp {
             Color32::TRANSPARENT
         };
 
-        let resp = Frame::new()
+        let mut row_clicked = false;
+        Frame::new()
             .fill(fill)
             .inner_margin(Margin::symmetric(12, 4))
             .show(ui, |ui| {
@@ -820,43 +949,59 @@ impl GdiffApp {
                             .strong()
                             .size(11.0),
                     );
-                    ui.add(
-                        egui::Label::new(RichText::new(&file.path).color(theme.text).size(13.0))
-                            .truncate(),
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let action = if file.staged { "−" } else { "+" };
-                        if icon_btn(ui, action, theme)
-                            .on_hover_text(if file.staged { "Unstage" } else { "Stage" })
-                            .clicked()
-                        {
-                            if file.staged {
-                                let _ = self.job_tx.send(Job::Unstage {
-                                    repo: self.repo.clone(),
-                                    paths: vec![file.path.clone()],
-                                });
-                            } else {
-                                let _ = self.job_tx.send(Job::Stage {
-                                    repo: self.repo.clone(),
-                                    paths: vec![file.path.clone()],
-                                });
-                            }
-                        }
-                        if !file.staged && file.status != git::FileStatus::Added {
-                            if icon_btn(ui, "↩", theme)
-                                .on_hover_text("Discard changes")
+                    let can_discard = !file.staged && file.status != git::FileStatus::Added;
+                    let row_w = ui.available_width();
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(row_w, 18.0),
+                        Layout::right_to_left(Align::Center),
+                        |ui| {
+                            ui.set_min_width(row_w);
+                            ui.set_max_width(row_w);
+                            let action = if file.staged { "−" } else { "+" };
+                            if icon_btn(ui, action, theme)
+                                .on_hover_text(if file.staged { "Unstage" } else { "Stage" })
                                 .clicked()
                             {
-                                self.pending_discard = Some(vec![file.path.clone()]);
+                                if file.staged {
+                                    let _ = self.job_tx.send(Job::Unstage {
+                                        repo: self.repo.clone(),
+                                        paths: vec![file.path.clone()],
+                                    });
+                                } else {
+                                    let _ = self.job_tx.send(Job::Stage {
+                                        repo: self.repo.clone(),
+                                        paths: vec![file.path.clone()],
+                                    });
+                                }
                             }
-                        }
-                    });
+                            if can_discard {
+                                if icon_btn(ui, "↩", theme)
+                                    .on_hover_text("Discard changes")
+                                    .clicked()
+                                {
+                                    self.pending_discard = Some(vec![file.path.clone()]);
+                                }
+                            }
+                            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                if ui
+                                    .add(
+                                        egui::Label::new(
+                                            RichText::new(&file.path).color(theme.text).size(13.0),
+                                        )
+                                        .truncate()
+                                        .sense(Sense::click()),
+                                    )
+                                    .clicked()
+                                {
+                                    row_clicked = true;
+                                }
+                            });
+                        },
+                    );
                 });
-            })
-            .response
-            .interact(Sense::click());
+            });
 
-        if resp.clicked() {
+        if row_clicked {
             let mods = ui.input(|i| i.modifiers);
             if mods.command || mods.ctrl {
                 if !self.multi.remove(&index) {
@@ -1027,6 +1172,119 @@ impl GdiffApp {
             self.pending_discard = None;
         }
     }
+
+    fn commit_box(&mut self, ui: &mut Ui, theme: &Theme) {
+        ui.add_space(4.0);
+        ui.add_space(4.0);
+        let hint = if cfg!(target_os = "macos") {
+            "Message (⌘Enter to commit)"
+        } else {
+            "Message (Ctrl+Enter to commit)"
+        };
+        let box_w = (ui.available_width() - 16.0).max(80.0);
+        let resp = ui.add_sized(
+            [box_w, 56.0],
+            TextEdit::multiline(&mut self.commit_message)
+                .id_salt("commit_message")
+                .hint_text(hint)
+                .font(egui::TextStyle::Body)
+                .desired_width(box_w),
+        );
+        if resp.has_focus()
+            && ui.input(|i| i.key_pressed(Key::Enter) && (i.modifiers.command || i.modifiers.ctrl))
+        {
+            self.request_commit(false);
+        }
+
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            let commit_label = if self.commit_in_flight {
+                "Committing…"
+            } else {
+                "Commit"
+            };
+            let commit = ui.add_sized(
+                [ui.available_width() * 0.5 - 6.0, 24.0],
+                egui::Button::new(
+                    RichText::new(commit_label)
+                        .color(theme.accent_on)
+                        .size(12.0),
+                )
+                .fill(theme.accent)
+                .stroke(Stroke::new(1.0, theme.accent))
+                .corner_radius(CornerRadius::same(4)),
+            );
+            if commit.clicked() && !self.commit_in_flight {
+                self.request_commit(false);
+            }
+
+            let push_label = if self.push_in_flight {
+                "Pushing…".to_string()
+            } else if self.ahead > 0 {
+                format!("Push ({})", self.ahead)
+            } else {
+                "Push".to_string()
+            };
+            let push = ui.add_sized(
+                [ui.available_width() - 8.0, 24.0],
+                egui::Button::new(RichText::new(push_label).color(theme.text).size(12.0))
+                    .fill(theme.bg_control)
+                    .stroke(Stroke::new(1.0, theme.accent))
+                    .corner_radius(CornerRadius::same(4)),
+            );
+            if push.clicked() && !self.push_in_flight {
+                self.request_push();
+            }
+        });
+
+        if let Some(status) = &self.status {
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                let color = if self.status_ok {
+                    theme.status_added
+                } else {
+                    theme.status_deleted
+                };
+                ui.add(egui::Label::new(RichText::new(status).color(color).size(11.0)).wrap());
+            });
+        }
+        ui.add_space(4.0);
+    }
+
+    fn commit_all_modal(&mut self, ui: &mut Ui) {
+        if !self.pending_commit_all {
+            return;
+        }
+        let mut close = false;
+        let mut confirm = false;
+        egui::Modal::new(egui::Id::new("commit_all_modal")).show(ui.ctx(), |ui| {
+            ui.set_width(360.0);
+            ui.heading("No staged changes");
+            ui.add_space(6.0);
+            ui.label("There are no staged changes to commit. Stage all changes and commit?");
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                if ui
+                    .add(egui::Button::new("Commit All").fill(self.theme.accent))
+                    .clicked()
+                {
+                    confirm = true;
+                    close = true;
+                }
+            });
+        });
+        if confirm {
+            self.request_commit(true);
+        }
+        if close {
+            self.pending_commit_all = false;
+        }
+    }
 }
 
 fn fingerprint(files: &[ChangedFile]) -> String {
@@ -1137,6 +1395,48 @@ fn worker(job_rx: Receiver<Job>, msg_tx: Sender<Msg>, ctx: egui::Context) {
                     continue;
                 }
             }
+            Job::Commit {
+                repo,
+                message,
+                stage_all,
+            } => {
+                if stage_all {
+                    if let Err(e) = git::stage_all(&repo) {
+                        Msg::Error(e)
+                    } else {
+                        match git::commit(&repo, &message) {
+                            Ok(summary) => match git::get_changed_files(&repo) {
+                                Ok(files) => Msg::Committed {
+                                    summary,
+                                    files,
+                                    info: git::get_repo_info(&repo),
+                                },
+                                Err(e) => Msg::Error(e),
+                            },
+                            Err(e) => Msg::Error(e),
+                        }
+                    }
+                } else {
+                    match git::commit(&repo, &message) {
+                        Ok(summary) => match git::get_changed_files(&repo) {
+                            Ok(files) => Msg::Committed {
+                                summary,
+                                files,
+                                info: git::get_repo_info(&repo),
+                            },
+                            Err(e) => Msg::Error(e),
+                        },
+                        Err(e) => Msg::Error(e),
+                    }
+                }
+            }
+            Job::Push { repo } => match git::push(&repo) {
+                Ok(summary) => Msg::Pushed {
+                    summary,
+                    info: git::get_repo_info(&repo),
+                },
+                Err(e) => Msg::Error(e),
+            },
         };
         let _ = msg_tx.send(msg);
         ctx.request_repaint();

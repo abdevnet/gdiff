@@ -51,6 +51,9 @@ pub struct RepoInfo {
     pub repo_name: String,
     pub branch: String,
     pub repo_path: PathBuf,
+    pub ahead: u32,
+    pub behind: u32,
+    pub has_upstream: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +119,7 @@ pub fn get_repo_info(repo: &Path) -> RepoInfo {
             current
         }
     };
+    let (ahead, behind, has_upstream) = tracking(repo);
     RepoInfo {
         repo_name: repo
             .file_name()
@@ -123,7 +127,61 @@ pub fn get_repo_info(repo: &Path) -> RepoInfo {
             .unwrap_or_else(|| repo.display().to_string()),
         branch,
         repo_path: repo.to_path_buf(),
+        ahead,
+        behind,
+        has_upstream,
     }
+}
+
+fn tracking(repo: &Path) -> (u32, u32, bool) {
+    let counts = git_soft(
+        repo,
+        &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+    );
+    parse_ahead_behind(&counts)
+}
+
+pub fn parse_ahead_behind(raw: &str) -> (u32, u32, bool) {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return (0, 0, false);
+    }
+    let mut parts = raw.split_whitespace();
+    let behind = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let ahead = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    (ahead, behind, true)
+}
+
+pub fn commit(repo: &Path, message: &str) -> Result<String, String> {
+    let msg = message.trim();
+    if msg.is_empty() {
+        return Err("Commit message is empty".into());
+    }
+    git_ok(repo, &["commit", "-m", msg])
+}
+
+pub fn push(repo: &Path) -> Result<String, String> {
+    let upstream = git_soft(
+        repo,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
+    );
+    if upstream.is_empty() {
+        git_ok(repo, &["push", "-u", "origin", "HEAD"])?;
+        Ok("Pushed and set upstream to origin".into())
+    } else {
+        git_ok(repo, &["push"])?;
+        Ok(format!("Pushed to {upstream}"))
+    }
+}
+
+pub fn stage_all(repo: &Path) -> Result<Vec<ChangedFile>, String> {
+    let _ = git_soft(repo, &["add", "-A"]);
+    get_changed_files(repo)
 }
 
 pub fn parse_porcelain(raw: &str) -> Vec<PorcelainEntry> {
@@ -666,5 +724,18 @@ mod tests {
             "{files:?}"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_commit_message_rejected() {
+        let err = commit(Path::new("."), "   ").unwrap_err();
+        assert!(err.contains("empty"));
+    }
+
+    #[test]
+    fn parse_tracking_counts() {
+        assert_eq!(parse_ahead_behind(""), (0, 0, false));
+        assert_eq!(parse_ahead_behind("2\t3"), (3, 2, true));
+        assert_eq!(parse_ahead_behind("0 0"), (0, 0, true));
     }
 }
