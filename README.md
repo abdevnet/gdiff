@@ -4,7 +4,7 @@ Native git diff viewer. Side-by-side or inline, stage/unstage/discard from the U
 
 No browser. No Electron. One binary.
 
-![gdiff screenshot](gdiff.png)
+![gdiff screenshot](gdiff.jpg)
 
 ## Quick start
 
