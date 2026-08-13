@@ -1,56 +1,75 @@
-# gdiff-viewer
+# gdiff
 
+Native git diff viewer. Side-by-side or inline, stage/unstage/discard from the UI, syntax highlighting, 326 bundled themes.
 
+No browser. No Electron. One binary.
 
-Lightweight git diff viewer using Monaco's diff editor — VS Code's diff view in your browser. No build step, no heavy dependencies.
+![gdiff screenshot](gdiff.png)
 
-![gdiff-viewer screenshot](gdiff.png)
-
-## Quick Start
+## Quick start
 
 ```bash
-npx gdiff-viewer                  # diff the current repo
-npx gdiff-viewer /path/to/repo    # diff a specific repo or worktree
+cargo run --release -- /path/to/repo
+# or after install:
+gdiff                          # current directory
+gdiff /path/to/repo            # any worktree; resolves to the git root
 ```
 
-Each invocation binds an ephemeral port and opens a dedicated Chrome window via `--app`. Press `Ctrl-C` in the terminal to stop the server.
+Requires `git` on `PATH`.
 
 ## Features
 
-- **Monaco diff editor** with full syntax highlighting
-- **Side-by-side** or **inline** diff modes
-- **Stage / unstage / discard** directly from the UI
-- **File explorer** sidebar with tree view
-- **Auto-refresh** — watches tracked files and git index for changes
-- **Keyboard navigation**: arrow keys to browse, `Z` open in editor, `R` refresh
-- **Editable repo path** in the header — type or drag-drop a folder to switch
-- **Theme picker** — Ghostty Purple, GitHub Dark, plus 326 bundled JetBrains color schemes (rainglow)
-- **Configurable editor** for the `Z` shortcut (Zed by default, anything else via config)
-- **Worktree-friendly** — pass any path, it resolves to the git root
-- Works on **macOS, Windows, and Linux**
+- Native window (egui), not a Chrome `--app` wrapper
+- Side-by-side or inline diff with syntax highlighting
+- Stage / unstage / discard from the file list
+- File explorer sidebar
+- Auto-refresh — watches the worktree and `.git`
+- Keyboard: arrows to browse, `Z` open in editor, `R` refresh
+- Type or drag-drop a folder to switch repo
+- Theme picker — Ghostty Purple, GitHub Dark, plus 326 JetBrains/rainglow schemes
+- Configurable editor for `Z` (Zed on macOS, Notepad on Windows)
+- Worktree-friendly
 
-## Install Globally (optional)
+## Install
 
 ```bash
-npm install -g gdiff-viewer
-gdiff /path/to/repo          # or: gdiff-viewer /path/to/repo
+cargo install --path .
 ```
+
+### Prebuilt targets
+
+| OS | Arch | Target triple |
+|----|------|----------------|
+| macOS | arm64 | `aarch64-apple-darwin` |
+| Windows | amd64 | `x86_64-pc-windows-msvc` |
+
+```bash
+# macOS Apple Silicon
+cargo build --release --target aarch64-apple-darwin
+
+# Windows x64 (on Windows, or via the GitHub Actions workflow)
+cargo build --release --target x86_64-pc-windows-msvc
+```
+
+CI (`.github/workflows/build.yml`) builds both and uploads the binaries as artifacts. Linking `x86_64-pc-windows-msvc` from macOS is not supported; use the Windows job.
 
 ## Configuration
 
-User settings live in `~/.gdiff-viewer.json`. The file is created automatically the first time you change a setting from the UI; you can also edit it by hand.
+User settings live in `~/.gdiff-viewer.json` — same file as the old JS app.
 
 ```json
 {
   "theme": "absent",
-  "editorCommand": "code {file}"
+  "editorCommand": "code {file}",
+  "sideBySide": true
 }
 ```
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `theme` | `default` | Picker selection. Built-ins: `default`, `github-dark`. JetBrains theme ids are the XML filename (e.g. `absent`, `absent-light`, `absent-contrast`). |
-| `editorCommand` | platform default below | Command run when you press `Z` on a file. `{file}` is replaced with the absolute path. |
+| `theme` | `default` | Built-ins: `default`, `github-dark`. JetBrains ids are the XML filename (e.g. `absent`). |
+| `editorCommand` | platform default below | `{file}` is replaced with the absolute path. |
+| `sideBySide` | `true` | Last side-by-side / inline choice. |
 
 Default `editorCommand`:
 
@@ -60,61 +79,22 @@ Default `editorCommand`:
 | Windows | `notepad.exe {file}` |
 | Linux | `xdg-open {file}` |
 
-Examples:
-
-```json
-{ "editorCommand": "code {file}" }                         // VS Code
-{ "editorCommand": "subl {file}" }                          // Sublime Text
-{ "editorCommand": "C:\\\\Tools\\\\notepad++.exe {file}" }  // Notepad++ on Windows
-```
-
-## Themes
-
-The picker is grouped: **Built-in**, **Dark**, **Light**, **High Contrast**. The 326 JetBrains schemes are extracted from the [rainglow](https://github.com/rainglow/jetbrains) collection at package time (see `THEMES_LICENSE` for attribution) and ship as a 180 KB JSON.
-
-Both the surrounding UI chrome (sidebar, header, picker) and the Monaco editor adopt the selected theme.
-
 ## Architecture
 
-No build step. Monaco and the JetBrains theme data ship inside the package, served locally with gzip — no CDN, no network round trips for the editor.
-
-| File | Purpose |
+| Path | Purpose |
 |------|---------|
-| `bin/gdiff.js` | CLI entry — starts server on an ephemeral port, opens Chrome `--app` |
-| `server.js` | HTTP API — git commands, file serving, SSE file watcher, config persistence, theme bundle, Monaco static serving |
-| `main.js` / `preload.js` | Electron entry — same logic as the HTTP server but over IPC |
-| `index.html` | UI + Monaco diff editor (loads from `vs/`) |
-| `vs/` | Bundled Monaco 0.44.0 (`min/vs` minus the IntelliSense workers we don't need for read-only diffs) |
+| `src/main.rs` | CLI + native window |
+| `src/app.rs` | UI, keyboard, worker jobs |
+| `src/git.rs` | `git` porcelain: status, diff, stage, unstage, discard, tree |
+| `src/diff_view.rs` | Line-aligned side-by-side / inline view |
+| `src/highlight.rs` | syntect token coloring |
+| `src/theme.rs` | Built-in + bundled rainglow chrome |
+| `src/watcher.rs` | `notify` + debounce |
+| `src/config.rs` | `~/.gdiff-viewer.json` |
 | `themes.json` | 326 pre-extracted JetBrains color schemes |
-| `scripts/build-themes.js` | One-shot builder: `node scripts/build-themes.js [xml-dir]` regenerates `themes.json` |
 
-## Worktree Usage
-
-```bash
-npx gdiff-viewer ~/repos/project-feature-xyz
-npx gdiff-viewer ~/repos/project-main
-```
-
-Or just type the path into the input at the top of the UI / drag a folder onto it.
-
-## Electron App (optional)
-
-If you prefer a standalone desktop window instead of the browser:
-
-```bash
-git clone https://github.com/abdevnet/gdiff.git
-cd gdiff
-npm install
-npm start                       # diff the current directory
-npx electron . /path/to/repo    # diff a specific repo
-```
-
-The included launcher script wraps that:
-
-```bash
-./launch.sh /path/to/repo
-```
+Git is invoked as argv (not a shell string). Errors from `git show` still come back empty so new/deleted files work.
 
 ## License
 
-MIT for the app code. Bundled JetBrains color schemes are MIT — see `THEMES_LICENSE`.
+MIT for the app. Bundled JetBrains color schemes are MIT — see `THEMES_LICENSE`.

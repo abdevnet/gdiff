@@ -1,0 +1,27 @@
+[package]
+name = "gdiff"
+version = "2.0.0"
+edition = "2024"
+license = "MIT"
+description = "Native git diff viewer"
+repository = "https://github.com/abdevnet/gdiff"
+readme = "README.md"
+
+[[bin]]
+name = "gdiff"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[dependencies]
+dirs = "6.0.0"
+eframe = { version = "0.36", default-features = false, features = ["glow", "default_fonts"] }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+notify = "6"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+similar = "3.1.2"
+syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }

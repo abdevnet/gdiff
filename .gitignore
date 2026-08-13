@@ -1,4 +1,11 @@
+/target
+**/*.rs.bk
 node_modules/
 package-lock.json
 dist/
 .DS_Store
+
+
+# Added by cargo
+
+/target
