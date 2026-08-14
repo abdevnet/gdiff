@@ -5,8 +5,8 @@ use crate::highlight::Engine;
 use crate::theme::{Catalog, Theme, ThemeGroup};
 use crate::watcher::{self, WatchEvent};
 use eframe::egui::{
-    self, Align, Color32, CornerRadius, Frame, Key, Layout, Margin, RichText, ScrollArea, Sense,
-    Stroke, TextEdit, Ui, Vec2,
+    self, Align, Color32, CornerRadius, Frame, Key, Layout, Margin, Pos2, RichText, ScrollArea,
+    Sense, Stroke, TextEdit, Ui, Vec2,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -22,6 +22,7 @@ pub struct GdiffApp {
     selected: Option<usize>,
     multi: HashSet<usize>,
     side_by_side: bool,
+    split_ratio: f32,
     theme_id: String,
     theme_filter: String,
     catalog: Catalog,
@@ -50,6 +51,7 @@ pub struct GdiffApp {
     behind: u32,
     has_upstream: bool,
     pending_commit_all: bool,
+    hunk_index: Option<usize>,
 }
 
 struct LoadedDiff {
@@ -170,6 +172,7 @@ impl GdiffApp {
             selected: None,
             multi: HashSet::new(),
             side_by_side: cfg.side_by_side.unwrap_or(true),
+            split_ratio: cfg.split_ratio.unwrap_or(0.5).clamp(0.2, 0.8),
             theme_id,
             theme_filter: String::new(),
             catalog,
@@ -198,6 +201,7 @@ impl GdiffApp {
             behind: info.behind,
             has_upstream: info.has_upstream,
             pending_commit_all: false,
+            hunk_index: None,
         };
         app.request_refresh();
         let _ = app.job_tx.send(Job::LoadTree {
@@ -345,6 +349,7 @@ impl GdiffApp {
                     return;
                 }
                 let doc = DiffDoc::build(&original, &modified, &path, &self.theme, &self.engine);
+                self.hunk_index = None;
                 self.loaded = Some(LoadedDiff {
                     path,
                     staged,
@@ -456,6 +461,8 @@ impl GdiffApp {
         if editing {
             return;
         }
+        let mut next_hunk = false;
+        let mut prev_hunk = false;
         ctx.input(|i| {
             if i.key_pressed(Key::ArrowDown) && !self.files.is_empty() {
                 let next = self
@@ -486,7 +493,41 @@ impl GdiffApp {
                 self.selected = None;
                 self.request_refresh();
             }
+            if i.key_pressed(Key::CloseBracket) || (i.key_pressed(Key::F7) && !i.modifiers.shift) {
+                next_hunk = true;
+            }
+            if i.key_pressed(Key::OpenBracket) || (i.key_pressed(Key::F7) && i.modifiers.shift) {
+                prev_hunk = true;
+            }
         });
+        if next_hunk {
+            self.goto_hunk(ctx, 1);
+        } else if prev_hunk {
+            self.goto_hunk(ctx, -1);
+        }
+    }
+
+    fn goto_hunk(&mut self, ctx: &egui::Context, dir: i32) {
+        let Some(loaded) = &self.loaded else {
+            return;
+        };
+        let starts = loaded.doc.hunk_starts();
+        if starts.is_empty() {
+            return;
+        }
+        let n = starts.len() as i32;
+        let idx = match self.hunk_index {
+            Some(i) => (i as i32 + dir).rem_euclid(n) as usize,
+            None => {
+                if dir >= 0 {
+                    0
+                } else {
+                    starts.len() - 1
+                }
+            }
+        };
+        self.hunk_index = Some(idx);
+        diff_view::jump_to_row(ctx, starts[idx]);
     }
 
     fn handle_drops(&mut self, ctx: &egui::Context) {
@@ -1088,13 +1129,15 @@ impl GdiffApp {
     }
 
     fn editor(&mut self, ui: &mut Ui, theme: &Theme) {
-        if let Some(loaded) = &self.loaded {
+        if self.loaded.is_some() {
+            let mut nav = 0i32;
             Frame::new()
                 .fill(theme.bg_control)
                 .inner_margin(Margin::symmetric(16, 6))
                 .stroke(Stroke::new(1.0, theme.border))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
+                        let loaded = self.loaded.as_ref().unwrap();
                         ui.label(
                             RichText::new(&loaded.path)
                                 .color(theme.text)
@@ -1106,10 +1149,35 @@ impl GdiffApp {
                                 .color(theme.accent)
                                 .size(11.0),
                         );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let n = loaded.doc.hunk_starts().len();
+                            let label = match self.hunk_index {
+                                Some(i) if n > 0 => format!("{}/{}", i + 1, n),
+                                _ => format!("{n}"),
+                            };
+                            ui.label(RichText::new(label).color(theme.text_muted).size(11.0));
+                            if nav_arrow_btn(ui, theme, false)
+                                .on_hover_text("Next change (] or F7)")
+                                .clicked()
+                            {
+                                nav = 1;
+                            }
+                            if nav_arrow_btn(ui, theme, true)
+                                .on_hover_text("Previous change ([ or Shift+F7)")
+                                .clicked()
+                            {
+                                nav = -1;
+                            }
+                        });
                     });
                 });
+            if nav != 0 {
+                self.goto_hunk(ui.ctx(), nav);
+            }
             let side = self.side_by_side;
-            diff_view::show(ui, &loaded.doc, theme, side);
+            if let Some(loaded) = &self.loaded {
+                diff_view::show(ui, &loaded.doc, theme, side, &mut self.split_ratio);
+            }
         } else {
             ui.centered_and_justified(|ui| {
                 ui.vertical_centered(|ui| {
@@ -1313,6 +1381,51 @@ fn small_btn(ui: &mut Ui, label: &str, theme: &Theme) -> egui::Response {
             .stroke(Stroke::new(1.0, theme.accent))
             .corner_radius(CornerRadius::same(3)),
     )
+}
+
+fn nav_arrow_btn(ui: &mut Ui, theme: &Theme, up: bool) -> egui::Response {
+    let size = Vec2::new(24.0, 20.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let hovered = resp.hovered();
+    ui.painter().rect_filled(
+        rect,
+        CornerRadius::same(3),
+        if hovered {
+            theme.bg_panel_hover
+        } else {
+            Color32::TRANSPARENT
+        },
+    );
+    let color = if hovered {
+        theme.text
+    } else {
+        theme.text_muted
+    };
+    let stroke = Stroke::new(1.6, color);
+    let c = rect.center();
+    let (tip_y, base_y) = if up {
+        (c.y - 5.5, c.y + 5.5)
+    } else {
+        (c.y + 5.5, c.y - 5.5)
+    };
+    let tip = Pos2::new(c.x, tip_y);
+    ui.painter()
+        .line_segment([Pos2::new(c.x, base_y), tip], stroke);
+    ui.painter().line_segment(
+        [
+            tip,
+            Pos2::new(c.x - 4.5, tip_y + if up { 5.0 } else { -5.0 }),
+        ],
+        stroke,
+    );
+    ui.painter().line_segment(
+        [
+            tip,
+            Pos2::new(c.x + 4.5, tip_y + if up { 5.0 } else { -5.0 }),
+        ],
+        stroke,
+    );
+    resp
 }
 
 fn icon_btn(ui: &mut Ui, label: &str, theme: &Theme) -> egui::Response {

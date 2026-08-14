@@ -305,8 +305,8 @@ fn ghostty_purple() -> Theme {
         branch_fg: Color32::WHITE,
         editor_bg,
         editor_fg,
-        inserted_line: with_alpha(rgb(0x05, 0xcb, 0x0d), 28),
-        removed_line: with_alpha(rgb(0xaa, 0x00, 0xa3), 28),
+        inserted_line: diff_wash(editor_bg, rgb(0x05, 0xcb, 0x0d), true),
+        removed_line: diff_wash(editor_bg, rgb(0xaa, 0x00, 0xa3), true),
         line_number: accent,
         tokens: TokenColors {
             keyword: TokenStyle::solid(rgb(0xe6, 0xa6, 0xff)),
@@ -351,8 +351,8 @@ fn github_dark() -> Theme {
         branch_fg: Color32::WHITE,
         editor_bg,
         editor_fg,
-        inserted_line: with_alpha(rgb(0x3f, 0xb9, 0x50), 32),
-        removed_line: with_alpha(rgb(0xf8, 0x51, 0x49), 32),
+        inserted_line: diff_wash(editor_bg, rgb(0x3f, 0xb9, 0x50), true),
+        removed_line: diff_wash(editor_bg, rgb(0xf8, 0x51, 0x49), true),
         line_number: rgb(0x6e, 0x76, 0x81),
         tokens: TokenColors {
             keyword: TokenStyle::solid(rgb(0xff, 0x7b, 0x72)),
@@ -460,8 +460,8 @@ fn from_bundled(id: &str, data: &BundledTheme) -> Theme {
         branch_fg: Color32::WHITE,
         editor_bg,
         editor_fg,
-        inserted_line: with_alpha(status_added, 32),
-        removed_line: with_alpha(status_deleted, 32),
+        inserted_line: diff_wash(editor_bg, status_added, is_dark),
+        removed_line: diff_wash(editor_bg, status_deleted, is_dark),
         line_number: text_muted,
         tokens: TokenColors {
             keyword: token_style(&tk.keyword, accent),
@@ -502,6 +502,24 @@ pub fn rgb(r: u8, g: u8, b: u8) -> Color32 {
 
 pub fn with_alpha(c: Color32, a: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
+}
+
+/// Opaque wash of `accent` over `editor_bg`. Bumps the mix if the theme's
+/// add/delete color is too close to the background (common on rainglow).
+pub fn diff_wash(editor_bg: Color32, accent: Color32, is_dark: bool) -> Color32 {
+    let mut t = if is_dark { 0.30 } else { 0.24 };
+    let mut out = mix(editor_bg, accent, t);
+    if (luminance(out) - luminance(editor_bg)).abs() < 22.0 {
+        t = if is_dark { 0.48 } else { 0.36 };
+        out = mix(editor_bg, accent, t);
+    }
+    out
+}
+
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let lerp = |x: u8, y: u8| ((1.0 - t) * x as f32 + t * y as f32).round() as u8;
+    Color32::from_rgb(lerp(a.r(), b.r()), lerp(a.g(), b.g()), lerp(a.b(), b.b()))
 }
 
 pub fn parse_hex(s: &str) -> Option<Color32> {
@@ -569,5 +587,13 @@ mod tests {
     fn parse_hex_variants() {
         assert_eq!(parse_hex("#ff00aa"), Some(rgb(0xff, 0x00, 0xaa)));
         assert_eq!(parse_hex("228a96"), Some(rgb(0x22, 0x8a, 0x96)));
+    }
+
+    #[test]
+    fn diff_wash_separates_from_background() {
+        let bg = rgb(0x25, 0x2c, 0x33);
+        let wash = diff_wash(bg, rgb(0xad, 0xdb, 0xbc), true);
+        assert!((luminance(wash) - luminance(bg)).abs() >= 18.0);
+        assert_ne!(wash, bg);
     }
 }

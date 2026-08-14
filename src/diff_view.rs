@@ -1,8 +1,8 @@
 use crate::highlight::{Engine, Span};
 use crate::theme::Theme;
 use eframe::egui::{
-    text::LayoutJob, Align, Color32, FontId, Pos2, Rect, RichText, ScrollArea, Sense, Stroke,
-    TextFormat, Ui, Vec2,
+    scroll_area::ScrollBarVisibility, text::LayoutJob, Align, Color32, CursorIcon, FontId, Id,
+    Pos2, Rect, RichText, ScrollArea, Sense, Stroke, TextFormat, Ui, Vec2,
 };
 use similar::{DiffTag, TextDiff};
 
@@ -102,6 +102,26 @@ impl DiffDoc {
 
         Self { rows }
     }
+
+    pub fn hunk_starts(&self) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut in_hunk = false;
+        for (i, row) in self.rows.iter().enumerate() {
+            let (del, ins) = row_lanes(row);
+            let changed = del || ins;
+            if changed && !in_hunk {
+                out.push(i);
+            }
+            in_hunk = changed;
+        }
+        out
+    }
+}
+
+pub fn jump_to_row(ctx: &eframe::egui::Context, row: usize) {
+    let y = row as f32 * ROW_H;
+    ctx.data_mut(|d| d.insert_temp(Id::new("diff_scroll_jump"), y));
+    ctx.request_repaint();
 }
 
 fn cell(idx: usize, spans: &[Vec<Span>], kind: LineKind) -> LineCell {
@@ -140,8 +160,9 @@ pub fn split_lines(s: &str) -> Vec<&str> {
 const ROW_H: f32 = 20.0;
 const GUTTER_PAD: f32 = 8.0;
 const FONT_SIZE: f32 = 13.0;
+const RULER_W: f32 = 16.0;
 
-pub fn show(ui: &mut Ui, doc: &DiffDoc, theme: &Theme, side_by_side: bool) {
+pub fn show(ui: &mut Ui, doc: &DiffDoc, theme: &Theme, side_by_side: bool, split_ratio: &mut f32) {
     if doc.rows.is_empty() {
         ui.centered_and_justified(|ui| {
             ui.label(
@@ -168,29 +189,170 @@ pub fn show(ui: &mut Ui, doc: &DiffDoc, theme: &Theme, side_by_side: bool) {
 
     let total_h = doc.rows.len() as f32 * ROW_H + 8.0;
     let avail = ui.available_size();
+    let jump_id = Id::new("diff_scroll_jump");
+    let jump_y = ui.ctx().data_mut(|d| d.remove_temp::<f32>(jump_id));
 
-    ScrollArea::both()
-        .auto_shrink([false, false])
-        .id_salt("diff_scroll")
-        .show_viewport(ui, |ui, viewport| {
-            ui.set_width(ui.available_width().max(avail.x));
-            ui.set_height(total_h.max(avail.y));
+    ui.spacing_mut().item_spacing.x = 0.0;
+    ui.horizontal(|ui| {
+        let pane_h = avail.y;
+        let pane_w = (ui.available_width() - RULER_W).max(40.0);
+        let mut offset_y = 0.0;
+        let mut view_h = pane_h;
+        let mut content_h = total_h;
+        let mut inner_rect = Rect::NOTHING;
+        let ratio = *split_ratio;
 
-            let start = ((viewport.min.y / ROW_H).floor() as usize).saturating_sub(2);
-            let end = (((viewport.max.y / ROW_H).ceil() as usize) + 2).min(doc.rows.len());
-            if start >= end {
-                return;
+        ui.allocate_ui(Vec2::new(pane_w, pane_h), |ui| {
+            let mut area = ScrollArea::both()
+                .auto_shrink([false, false])
+                .id_salt("diff_scroll")
+                .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden);
+            if let Some(y) = jump_y {
+                area = area.vertical_scroll_offset(y);
             }
+            let out = area.show_viewport(ui, |ui, viewport| {
+                ui.set_width(ui.available_width().max(pane_w));
+                ui.set_height(total_h.max(avail.y));
 
-            let origin = ui.max_rect().min;
-            let width = ui.max_rect().width();
+                let start = ((viewport.min.y / ROW_H).floor() as usize).saturating_sub(2);
+                let end = (((viewport.max.y / ROW_H).ceil() as usize) + 2).min(doc.rows.len());
+                if start >= end {
+                    return;
+                }
 
-            for i in start..end {
-                let y = origin.y + i as f32 * ROW_H;
-                let row_rect = Rect::from_min_size(Pos2::new(origin.x, y), Vec2::new(width, ROW_H));
-                paint_row(ui, row_rect, &doc.rows[i], theme, side_by_side, gutter_w);
-            }
+                let origin = ui.max_rect().min;
+                let width = ui.max_rect().width();
+
+                for i in start..end {
+                    let y = origin.y + i as f32 * ROW_H;
+                    let row_rect =
+                        Rect::from_min_size(Pos2::new(origin.x, y), Vec2::new(width, ROW_H));
+                    let split_x = if side_by_side {
+                        Some(origin.x + width * ratio)
+                    } else {
+                        None
+                    };
+                    paint_row(ui, row_rect, &doc.rows[i], theme, split_x, gutter_w);
+                }
+            });
+            offset_y = out.state.offset.y;
+            view_h = out.inner_rect.height();
+            content_h = out.content_size.y.max(total_h);
+            inner_rect = out.inner_rect;
         });
+
+        if side_by_side && inner_rect.width() > 80.0 {
+            let mid = inner_rect.min.x + inner_rect.width() * *split_ratio;
+            let handle = Rect::from_center_size(
+                Pos2::new(mid, inner_rect.center().y),
+                Vec2::new(8.0, inner_rect.height()),
+            );
+            let resp = ui.interact(handle, ui.id().with("diff_split"), Sense::click_and_drag());
+            if resp.hovered() || resp.dragged() {
+                ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+                ui.painter().line_segment(
+                    [
+                        Pos2::new(mid, inner_rect.min.y),
+                        Pos2::new(mid, inner_rect.max.y),
+                    ],
+                    Stroke::new(2.0, theme.accent),
+                );
+            }
+            if resp.double_clicked() {
+                *split_ratio = 0.5;
+                crate::config::set_split_ratio(0.5);
+            } else if resp.dragged() {
+                if let Some(pos) = resp.interact_pointer_pos() {
+                    *split_ratio =
+                        ((pos.x - inner_rect.min.x) / inner_rect.width()).clamp(0.2, 0.8);
+                }
+            } else if resp.drag_stopped() {
+                crate::config::set_split_ratio(*split_ratio);
+            }
+        }
+
+        let (ruler, resp) =
+            ui.allocate_exact_size(Vec2::new(RULER_W, pane_h), Sense::click_and_drag());
+        paint_overview(ui, ruler, doc, theme, offset_y, view_h, content_h);
+
+        if resp.clicked() || resp.dragged() {
+            if let Some(pos) = resp.interact_pointer_pos() {
+                let frac = ((pos.y - ruler.min.y) / ruler.height().max(1.0)).clamp(0.0, 1.0);
+                let max_off = (content_h - view_h).max(0.0);
+                let target = (frac * content_h - view_h * 0.5).clamp(0.0, max_off);
+                ui.ctx().data_mut(|d| d.insert_temp(jump_id, target));
+                ui.ctx().request_repaint();
+            }
+        }
+    });
+}
+
+fn paint_overview(
+    ui: &mut Ui,
+    ruler: Rect,
+    doc: &DiffDoc,
+    theme: &Theme,
+    offset_y: f32,
+    view_h: f32,
+    content_h: f32,
+) {
+    ui.painter().rect_filled(ruler, 0.0, theme.bg_panel);
+    ui.painter().line_segment(
+        [ruler.left_top(), ruler.left_bottom()],
+        Stroke::new(1.0, theme.border),
+    );
+
+    let n = doc.rows.len().max(1) as f32;
+    let h = ruler.height().max(1.0);
+    let tick_h = (h / n).max(2.0);
+    let mid = ruler.center().x;
+
+    for (i, row) in doc.rows.iter().enumerate() {
+        let (del, ins) = row_lanes(row);
+        if !del && !ins {
+            continue;
+        }
+        let y = ruler.min.y + (i as f32 / n) * h;
+        let y1 = (y + tick_h).min(ruler.max.y);
+        if del {
+            ui.painter().rect_filled(
+                Rect::from_min_max(Pos2::new(ruler.min.x + 1.0, y), Pos2::new(mid, y1)),
+                0.0,
+                theme.status_deleted,
+            );
+        }
+        if ins {
+            ui.painter().rect_filled(
+                Rect::from_min_max(Pos2::new(mid, y), Pos2::new(ruler.max.x - 1.0, y1)),
+                0.0,
+                theme.status_added,
+            );
+        }
+    }
+
+    let max_off = (content_h - view_h).max(0.0);
+    if max_off > 0.0 && view_h > 0.0 {
+        let thumb_h = ((view_h / content_h) * h).clamp(18.0, h);
+        let travel = h - thumb_h;
+        let thumb_y = ruler.min.y + (offset_y / max_off) * travel;
+        let thumb = Rect::from_min_size(
+            Pos2::new(ruler.min.x + 1.0, thumb_y),
+            Vec2::new((RULER_W - 2.0).max(4.0), thumb_h),
+        );
+        ui.painter()
+            .rect_filled(thumb, 2.0, crate::theme::with_alpha(theme.text_muted, 140));
+    }
+}
+
+fn row_lanes(row: &DiffRow) -> (bool, bool) {
+    match row {
+        DiffRow::Both { left, right } => (
+            left.kind == LineKind::Delete,
+            right.kind == LineKind::Insert,
+        ),
+        DiffRow::LeftOnly { left } => (left.kind == LineKind::Delete, false),
+        DiffRow::RightOnly { right } => (false, right.kind == LineKind::Insert),
+    }
 }
 
 fn paint_row(
@@ -198,11 +360,10 @@ fn paint_row(
     rect: Rect,
     row: &DiffRow,
     theme: &Theme,
-    side_by_side: bool,
+    split_x: Option<f32>,
     gutter_w: f32,
 ) {
-    if side_by_side {
-        let mid = rect.center().x;
+    if let Some(mid) = split_x {
         let left = Rect::from_min_max(rect.min, Pos2::new(mid, rect.max.y));
         let right = Rect::from_min_max(Pos2::new(mid, rect.min.y), rect.max);
         match row {
@@ -242,6 +403,18 @@ fn paint_cell(ui: &mut Ui, rect: Rect, cell: Option<&LineCell>, theme: &Theme, g
 
     let gutter = Rect::from_min_max(rect.min, Pos2::new(rect.min.x + gutter_w, rect.max.y));
     ui.painter().rect_filled(gutter, 0.0, theme.bg_panel);
+    if let Some(kind) = cell.map(|c| c.kind) {
+        let mark = match kind {
+            LineKind::Delete => Some(theme.status_deleted),
+            LineKind::Insert => Some(theme.status_added),
+            LineKind::Context => None,
+        };
+        if let Some(color) = mark {
+            let stripe =
+                Rect::from_min_max(Pos2::new(gutter.max.x - 3.0, gutter.min.y), gutter.max);
+            ui.painter().rect_filled(stripe, 0.0, color);
+        }
+    }
 
     let mut job = LayoutJob::default();
     job.wrap.max_width = f32::INFINITY;
@@ -345,5 +518,6 @@ mod tests {
             .rows
             .iter()
             .any(|r| matches!(r, DiffRow::RightOnly { .. })));
+        assert_eq!(doc.hunk_starts().len(), 1);
     }
 }

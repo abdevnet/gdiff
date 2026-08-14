@@ -11,6 +11,8 @@ pub struct Config {
     pub editor_command: Option<String>,
     #[serde(default)]
     pub side_by_side: Option<bool>,
+    #[serde(default)]
+    pub split_ratio: Option<f32>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -42,6 +44,12 @@ pub fn set_theme(theme: &str) {
 pub fn set_diff_mode(side_by_side: bool) {
     let mut cfg = load();
     cfg.side_by_side = Some(side_by_side);
+    let _ = save(&cfg);
+}
+
+pub fn set_split_ratio(split_ratio: f32) {
+    let mut cfg = load();
+    cfg.split_ratio = Some(split_ratio.clamp(0.2, 0.8));
     let _ = save(&cfg);
 }
 
